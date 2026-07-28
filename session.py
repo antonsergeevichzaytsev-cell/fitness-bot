@@ -21,6 +21,9 @@ START_KEYWORDS = ["начал", "начинаю", "старт", "погнали"
 END_KEYWORDS = ["закончил", "конец тренировки", "финиш", "всё, закончили", "готово с тренировкой"]
 SET_DONE_KEYWORDS = ["взял", "готово", "сделал", "есть"]
 EXTEND_REST_KEYWORDS = ["продли", "ещё минут", "ещё секунд", "устал", "нужно больше", "добавь врем"]
+REPLACE_KEYWORDS = ["замени", "заменить", "занят", "не работает", "сломан", "другое упражнение"]
+SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делать", "скип"]
+UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 
 
 def is_session_start(text):
@@ -90,6 +93,105 @@ def extract_extend_seconds(text, default_sec=30):
     return default_sec
 
 
+def is_replace_exercise_request(text):
+    """'замени упражнение', 'тренажёр занят', 'сломан' — просьба
+    предложить альтернативу текущему упражнению. Детерминированное
+    распознавание НАМЕРЕНИЯ (не выбор самой замены — тот требует
+    понимания паттерна движения, отдельный шаг через DeepSeek + проверку
+    safety.py перед тем, как предложить что-либо)."""
+    t = text.strip().lower()
+    return any(kw in t for kw in REPLACE_KEYWORDS)
+
+
+def is_skip_request(text):
+    """'пропусти', 'скип' — пропустить текущее упражнение целиком (не
+    один подход, всё упражнение), перейти к следующему без записи."""
+    t = text.strip().lower()
+    return any(kw in t for kw in SKIP_KEYWORDS)
+
+
+def is_undo_request(text):
+    """'отмени', 'ошибся' — откатить последнюю записанную запись."""
+    t = text.strip().lower()
+    return any(kw in t for kw in UNDO_KEYWORDS)
+
+
+def skip_exercise(data):
+    """Пропускает текущее упражнение целиком (не записывая ни одного
+    подхода) — переходит на следующее упражнение в дне, как будто оно
+    уже пройдено. Возвращает (skipped_exercise, next_exercise) — next_
+    exercise None, если пропущенное было последним в дне (день завершён
+    без него). None, None если нет активного упражнения для пропуска."""
+    ex, _ = current_exercise_info(data)
+    if ex is None:
+        return None, None
+
+    session = data["active_session"]
+    day_id = session["day_id"]
+    next_order = ex["order"] + 1
+    next_ex = prog.get_exercise(day_id, next_order)
+
+    if next_ex is None:
+        session["current_exercise_order"] = None
+        session["current_set_number"] = None
+    else:
+        session["current_exercise_order"] = next_order
+        session["current_set_number"] = 1
+
+    session["resting_until"] = None
+    session["reminder_sent"] = False
+    return ex, next_ex
+
+
+def undo_last_set(data):
+    """Откатывает последнюю запись в data['sets'] (по времени ts, не по
+    порядку в списке — на случай, если порядок когда-то изменится).
+
+    Если откатываемая запись — из ТЕКУЩЕГО упражнения активной сессии
+    (последний подход, который только что засчитал advance_position),
+    откатывает current_set_number на 1 назад, чтобы пошаговый флоу не
+    'убежал вперёд' относительно реальной истории. Откат через границу
+    упражнений (когда только что перешли на новое) — редкий случай,
+    сознательно не восстанавливаем точный номер подхода прошлого
+    упражнения автоматически, Антон может уточнить текстом отдельно.
+
+    Возвращает удалённую запись (dict) или None, если sets пуст."""
+    sets = data.get("sets", [])
+    if not sets:
+        return None
+
+    last = max(sets, key=lambda s: s["ts"])
+    sets.remove(last)
+
+    session = data.get("active_session")
+    if not session or not session.get("day_id"):
+        return last
+
+    ex, set_num = current_exercise_info(data)
+    if not ex:
+        return last
+
+    normalized_current = w.normalize_exercise_name(ex["name"], data.get("exercise_aliases", {}))
+    if last["exercise"] == normalized_current and set_num > 1:
+        session["current_set_number"] = set_num - 1
+
+    return last
+
+
+def apply_replacement(data, order, replacement_ex):
+    """Применяет подтверждённую замену упражнения — сохраняет её как
+    override для этого order в active_session (не в training_program.json
+    — замена действует только для текущей сессии, не меняет базовую
+    программу навсегда). replacement_ex — dict в том же формате, что
+    упражнения программы (name/machine/sets/reps_min/reps_max/
+    weight_min_kg/weight_max_kg/tempo/rest_sec/order/per_side)."""
+    session = data.get("active_session")
+    if not session:
+        return False
+    session.setdefault("exercise_overrides", {})[str(order)] = replacement_ex
+    return True
+
+
 def start_session(data, day_id=None):
     """Открывает сессию — запоминает момент старта, дату, день программы
     (по расписанию через program.today_day_id(), если day_id не передан
@@ -124,13 +226,25 @@ def start_session(data, day_id=None):
 def current_exercise_info(data):
     """Возвращает (exercise_dict, set_number) для текущей позиции
     активной сессии, или (None, None) если сессия не активна, день не
-    определён, или упражнения в дне кончились (день пройден)."""
+    определён, или упражнения в дне кончились (день пройден).
+
+    Если для текущего order есть замена (session['exercise_overrides']
+    — установлена apply_replacement при подтверждении замены тренажёра/
+    упражнения), возвращает её вместо статичного плана из
+    training_program.json. Замена действует ТОЛЬКО для этой сессии —
+    базовая программа не меняется, order (позиция во флоу) остаётся
+    прежним, меняются только параметры (имя/вес/повторы/темп/отдых)."""
     session = data.get("active_session")
     if not session or not session.get("day_id"):
         return None, None
     order = session.get("current_exercise_order")
     if order is None:
         return None, None
+
+    overrides = session.get("exercise_overrides", {})
+    if str(order) in overrides:
+        return overrides[str(order)], session.get("current_set_number", 1)
+
     ex = prog.get_exercise(session["day_id"], order)
     if not ex:
         return None, None  # order вышел за пределы дня — упражнения кончились

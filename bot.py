@@ -266,6 +266,94 @@ def handle_weight_answer(data, text):
     )
 
 
+def handle_replace_request(data, reason_text):
+    """Обрабатывает просьбу заменить текущее упражнение — вызывает
+    parser.suggest_replacement (DeepSeek), затем ОБЯЗАТЕЛЬНО проверяет
+    результат через safety.check_exercise ПРЕЖДЕ чем показать
+    пользователю (промпт уже называет стоп-лист явно, но код-проверка
+    здесь — та же архитектура, что и в safety.py: промпт может быть
+    проигнорирован моделью, код-проверка не может).
+
+    Возвращает (message_text, reply_markup_or_None). При safety-блоке
+    предложение НЕ показывается вообще — вместо него честное сообщение,
+    что предложенная замена задета запретом, попробовать другую
+    формулировку причины."""
+    ex, set_num = sess.current_exercise_info(data)
+    if ex is None:
+        return "Сейчас нет активного упражнения для замены — напиши «начал», чтобы начать тренировку.", None
+
+    suggestion = parser.suggest_replacement(ex, reason=reason_text)
+    if suggestion.get("error"):
+        return suggestion.get("question", "Не удалось предложить замену."), None
+
+    safety_result = safety.check_exercise(suggestion["replacement_name"])
+    if safety_result["status"] == "hard_block":
+        print(f"  ! DeepSeek suggested banned replacement: {suggestion['replacement_name']} ({safety_result['pattern']})",
+              file=sys.stderr)
+        return (
+            "Не могу предложить замену — модель предложила запрещённое упражнение "
+            "(стоп-лист программы). Попробуй уточнить причину замены другими словами."
+        ), None
+
+    replacement_ex = {
+        "name": suggestion["replacement_name"],
+        "machine": suggestion.get("machine", ""),
+        "sets": ex["sets"],  # число подходов не меняем — только само упражнение
+        "reps_min": suggestion.get("reps_min", ex["reps_min"]),
+        "reps_max": suggestion.get("reps_max", ex["reps_max"]),
+        "weight_min_kg": suggestion.get("weight_min_kg"),
+        "weight_max_kg": suggestion.get("weight_max_kg"),
+        "tempo": suggestion.get("tempo", ex["tempo"]),
+        "rest_sec": suggestion.get("rest_sec", ex["rest_sec"]),
+        "order": ex["order"],
+        "per_side": ex.get("per_side", False),
+    }
+
+    suggestion_id = make_suggestion_id(f"repl_{ex['order']}")
+    data.setdefault("pending_suggestions", []).append({
+        "id": suggestion_id,
+        "type": "replacement",
+        "order": ex["order"],
+        "replacement": replacement_ex,
+        "status": "pending",
+        "created_ts": datetime.now(timezone.utc).isoformat(),
+    })
+
+    text = (
+        f"\U0001f504 Замена для «{ex['name']}»:\n\n"
+        f"{prog.format_exercise_line(replacement_ex)}\n\n"
+        f"{suggestion.get('reasoning', '')}"
+    )
+    markup = {
+        "inline_keyboard": [[
+            {"text": "\U0001f44d заменить", "callback_data": f"repl:confirm:{suggestion_id}"},
+            {"text": "\U0001f44e не то", "callback_data": f"repl:reject:{suggestion_id}"},
+        ]]
+    }
+    return text, markup
+
+
+def handle_skip(data):
+    """Обрабатывает 'пропусти' — пропускает текущее упражнение целиком
+    без записи подходов, через session.skip_exercise."""
+    skipped, next_ex = sess.skip_exercise(data)
+    if skipped is None:
+        return "Сейчас нет активного упражнения, которое можно пропустить."
+    if next_ex is None:
+        return f"Пропустил «{skipped['name']}» — это было последнее упражнение дня. Напиши «закончил»."
+    return f"Пропустил «{skipped['name']}».\n\nСледующее упражнение:\n{prog.format_exercise_line(next_ex)}"
+
+
+def handle_undo(data):
+    """Обрабатывает 'отмени' — откатывает последнюю записанную запись
+    через session.undo_last_set."""
+    undone = sess.undo_last_set(data)
+    if undone is None:
+        return "Нечего отменять — история пуста."
+    weight_str = f"{undone['weight_kg']}кг" if undone.get("weight_kg") is not None else "б/в"
+    return f"Отменил: {undone['exercise']} — {weight_str} \u00d7 {undone['reps']} (подход {undone['set_number']})."
+
+
 def handle_extend_rest(data, text):
     """Обрабатывает просьбу продлить отдых — 'продли на 30', 'устал'.
     Использует session.extract_extend_seconds для количества (дефолт
@@ -336,12 +424,16 @@ def handle_set_confirmation(data):
 
 def handle_callback(callback_data, data):
     """Обрабатывает нажатие кнопки подтверждения/отклонения предложения.
+    Два типа предложений используют один и тот же pending_suggestions
+    список, различаются префиксом callback_data:
+    - 'sugg:...' — предложение прогрессии веса (progression.py)
+    - 'repl:...' — предложение замены упражнения (parser.suggest_replacement)
     Возвращает текст для answerCallbackQuery (короткое всплывающее
     уведомление) или None, если callback_data не наш формат."""
     parts = callback_data.split(":")
-    if len(parts) != 3 or parts[0] != "sugg":
+    if len(parts) != 3 or parts[0] not in ("sugg", "repl"):
         return None
-    action, suggestion_id = parts[1], parts[2]
+    prefix, action, suggestion_id = parts
 
     suggestions = data.get("pending_suggestions", [])
     match = next((s for s in suggestions if s["id"] == suggestion_id), None)
@@ -350,6 +442,16 @@ def handle_callback(callback_data, data):
 
     if match["status"] != "pending":
         return "Уже обработано"
+
+    if prefix == "repl":
+        if action == "confirm":
+            sess.apply_replacement(data, match["order"], match["replacement"])
+            match["status"] = "confirmed"
+            return f"Заменено: {match['replacement']['name']}"
+        elif action == "reject":
+            match["status"] = "rejected"
+            return "Понял, оставляю как есть"
+        return None
 
     if action == "confirm":
         w.set_target(data, match["exercise"], match["suggested_weight_kg"], match["suggested_reps"])
@@ -423,6 +525,19 @@ def main():
                     duration_minutes=session_result["duration_minutes"],
                 )
                 outgoing.append((report, None, None))
+            continue
+
+        if sess.is_replace_exercise_request(text):
+            reply_text, markup = handle_replace_request(data, text)
+            outgoing.append((reply_text, markup, None))
+            continue
+
+        if sess.is_skip_request(text):
+            outgoing.append((handle_skip(data), None, None))
+            continue
+
+        if sess.is_undo_request(text):
+            outgoing.append((handle_undo(data), None, None))
             continue
 
         if sess.is_extend_rest_request(text):

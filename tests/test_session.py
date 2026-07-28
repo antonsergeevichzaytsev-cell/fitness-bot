@@ -533,3 +533,158 @@ def test_extend_rest_resets_reminder_sent():
     assert data["active_session"]["reminder_sent"] is False
 
 
+# --- is_replace_exercise_request / is_skip_request / is_undo_request ----
+
+def test_is_replace_exercise_request_matches_keywords():
+    for text in ["замени упражнение", "заменить", "тренажёр занят",
+                 "не работает", "сломан"]:
+        assert sess.is_replace_exercise_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_replace_exercise_request_false_for_workout_log():
+    assert sess.is_replace_exercise_request("присед 50 на 8") is False
+
+
+def test_is_skip_request_matches_keywords():
+    for text in ["пропусти", "скип", "не буду делать"]:
+        assert sess.is_skip_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_skip_request_false_for_workout_log():
+    assert sess.is_skip_request("присед 50 на 8") is False
+
+
+def test_is_undo_request_matches_keywords():
+    for text in ["отмени", "отмена", "ошибся", "не то записал"]:
+        assert sess.is_undo_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_undo_request_false_for_workout_log():
+    assert sess.is_undo_request("присед 50 на 8") is False
+
+
+# --- skip_exercise -----------------------------------------------------
+
+def test_skip_exercise_no_active_session_returns_none():
+    data = w.load_workouts()
+    skipped, next_ex = sess.skip_exercise(data)
+    assert skipped is None and next_ex is None
+
+
+def test_skip_exercise_moves_to_next_without_recording():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    skipped, next_ex = sess.skip_exercise(data)
+    assert skipped["name"] == "Vertical Traction (тяга сверху к груди)"
+    assert next_ex["name"] == "Low Row нейтральным хватом"
+    assert data["sets"] == []  # ничего не записано
+    assert data["active_session"]["current_exercise_order"] == 2
+    assert data["active_session"]["current_set_number"] == 1
+
+
+def test_skip_exercise_last_in_day_returns_none_next():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    last_order = prog.get_day_plan("1")["exercises"][-1]["order"]
+    data["active_session"]["current_exercise_order"] = last_order
+    skipped, next_ex = sess.skip_exercise(data)
+    assert next_ex is None
+    assert data["active_session"]["current_exercise_order"] is None
+
+
+def test_skip_exercise_clears_rest_timer():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)  # выставляет resting_until
+    sess.skip_exercise(data)
+    assert data["active_session"]["resting_until"] is None
+
+
+# --- undo_last_set -----------------------------------------------------
+
+def test_undo_last_set_empty_sets_returns_none():
+    data = w.load_workouts()
+    assert sess.undo_last_set(data) is None
+
+
+def test_undo_last_set_removes_most_recent():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    assert len(data["sets"]) == 2
+    undone = sess.undo_last_set(data)
+    assert undone["set_number"] == 2
+    assert len(data["sets"]) == 1
+
+
+def test_undo_last_set_rolls_back_current_set_number():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    assert data["active_session"]["current_set_number"] == 3
+    sess.undo_last_set(data)
+    assert data["active_session"]["current_set_number"] == 2
+
+
+def test_undo_last_set_without_active_session_still_removes():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    undone = sess.undo_last_set(data)
+    assert undone["exercise"] == "присед"
+    assert data["sets"] == []
+
+
+# --- apply_replacement / current_exercise_info override ------------------
+
+def test_apply_replacement_no_active_session_returns_false():
+    data = w.load_workouts()
+    assert sess.apply_replacement(data, 1, {"name": "test"}) is False
+
+
+def test_apply_replacement_overrides_current_exercise_info():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    replacement = {
+        "name": "Cable Row замена", "machine": "Кроссовер", "sets": 4,
+        "reps_min": 8, "reps_max": 10, "weight_min_kg": 40, "weight_max_kg": 45,
+        "tempo": "2-1-2-0", "rest_sec": 90, "order": 1, "per_side": False,
+    }
+    sess.apply_replacement(data, 1, replacement)
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Cable Row замена"
+
+
+def test_apply_replacement_only_affects_specific_order():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    replacement = {
+        "name": "Cable Row замена", "machine": "Кроссовер", "sets": 4,
+        "reps_min": 8, "reps_max": 10, "weight_min_kg": 40, "weight_max_kg": 45,
+        "tempo": "2-1-2-0", "rest_sec": 90, "order": 1, "per_side": False,
+    }
+    sess.apply_replacement(data, 1, replacement)
+    # переходим на order=2 — там замены нет, должен вернуться обычный план
+    data["active_session"]["current_exercise_order"] = 2
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Low Row нейтральным хватом"
+
+
+def test_apply_replacement_advance_position_records_replacement_name():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    replacement = {
+        "name": "Cable Row замена", "machine": "Кроссовер", "sets": 4,
+        "reps_min": 8, "reps_max": 10, "weight_min_kg": 40, "weight_max_kg": 45,
+        "tempo": "2-1-2-0", "rest_sec": 90, "order": 1, "per_side": False,
+    }
+    sess.apply_replacement(data, 1, replacement)
+    result = sess.advance_position(data, weight_kg=42.5, reps=9)
+    # recorded_exercise возвращает имя как в плане (не нормализованное) —
+    # нормализация происходит внутри add_set для data['sets'], не для
+    # возвращаемого значения advance_position
+    assert result["recorded_exercise"] == "Cable Row замена"
+    assert data["sets"][-1]["exercise"] == "cable row замена"
+
+

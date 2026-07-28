@@ -382,3 +382,192 @@ def test_handle_extend_rest_actually_extends_resting_until():
     bot.handle_extend_rest(data, "продли на 30")
     after = data["active_session"]["resting_until"]
     assert after != before  # реально изменилось, не просто текст ответа
+
+
+# --- handle_skip -------------------------------------------------------
+
+def test_handle_skip_without_active_session():
+    data = w.load_workouts()
+    result = bot.handle_skip(data)
+    assert "нет активного упражнения" in result.lower()
+
+
+def test_handle_skip_moves_to_next_exercise():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    result = bot.handle_skip(data)
+    assert "Vertical Traction" in result
+    assert "Low Row" in result
+    assert data["sets"] == []  # ничего не записано
+
+
+def test_handle_skip_last_exercise_of_day():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    last_order = prog.get_day_plan("1")["exercises"][-1]["order"]
+    data["active_session"]["current_exercise_order"] = last_order
+    result = bot.handle_skip(data)
+    assert "последнее упражнение" in result.lower()
+    assert "закончил" in result.lower()
+
+
+# --- handle_undo -------------------------------------------------------
+
+def test_handle_undo_empty_history():
+    data = w.load_workouts()
+    result = bot.handle_undo(data)
+    assert "нечего отменять" in result.lower()
+
+
+def test_handle_undo_removes_last_recorded_set():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_set_confirmation(data)
+    before_count = len(data["sets"])
+    result = bot.handle_undo(data)
+    assert "отменил" in result.lower()
+    assert len(data["sets"]) == before_count - 1
+
+
+# --- handle_replace_request ---------------------------------------------
+
+def test_handle_replace_without_active_session():
+    data = w.load_workouts()
+    text, markup = bot.handle_replace_request(data, "занят")
+    assert "нет активного упражнения" in text.lower()
+    assert markup is None
+
+
+def test_handle_replace_shows_suggestion_with_buttons():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+
+    fake_suggestion = {
+        "replacement_name": "Cable Row (тяга блока сидя)",
+        "machine": "Кроссовер", "reasoning": "Тот же паттерн тяги.",
+        "weight_min_kg": 40, "weight_max_kg": 45,
+        "reps_min": 8, "reps_max": 10, "tempo": "2-1-2-0", "rest_sec": 90,
+    }
+    with mock.patch("bot.parser.suggest_replacement", return_value=fake_suggestion):
+        text, markup = bot.handle_replace_request(data, "тренажёр занят")
+
+    assert "Cable Row" in text
+    assert markup is not None
+    assert "inline_keyboard" in markup
+    assert len(data["pending_suggestions"]) == 1
+    assert data["pending_suggestions"][0]["type"] == "replacement"
+
+
+def test_handle_replace_blocks_banned_suggestion():
+    # КРИТИЧНО: если DeepSeek "галлюцинирует" и предлагает запрещённое
+    # упражнение — код-проверка ДОЛЖНА заблокировать его до показа,
+    # промпт не единственная защита (тот же принцип, что safety.py).
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+
+    banned_suggestion = {
+        "replacement_name": "жим ногами в тренажёре",  # запрещено — leg_press
+        "machine": "Leg Press", "reasoning": "test",
+        "weight_min_kg": 100, "weight_max_kg": 120,
+        "reps_min": 10, "reps_max": 12, "tempo": "2-1-2-0", "rest_sec": 90,
+    }
+    with mock.patch("bot.parser.suggest_replacement", return_value=banned_suggestion):
+        text, markup = bot.handle_replace_request(data, "что угодно")
+
+    assert "запрещённое" in text.lower()
+    assert markup is None
+    assert data.get("pending_suggestions", []) == []  # не сохранено вообще
+
+
+def test_handle_replace_error_from_parser():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+
+    with mock.patch("bot.parser.suggest_replacement",
+                     return_value={"error": True, "question": "DeepSeek недоступен"}):
+        text, markup = bot.handle_replace_request(data, "занят")
+
+    assert "недоступен" in text.lower()
+    assert markup is None
+
+
+# --- handle_callback: repl prefix ----------------------------------------
+
+def test_callback_repl_confirm_applies_replacement():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+
+    fake_suggestion = {
+        "replacement_name": "Cable Row (тяга блока сидя)",
+        "machine": "Кроссовер", "reasoning": "test",
+        "weight_min_kg": 40, "weight_max_kg": 45,
+        "reps_min": 8, "reps_max": 10, "tempo": "2-1-2-0", "rest_sec": 90,
+    }
+    with mock.patch("bot.parser.suggest_replacement", return_value=fake_suggestion):
+        bot.handle_replace_request(data, "занят")
+
+    suggestion_id = data["pending_suggestions"][0]["id"]
+    result = bot.handle_callback(f"repl:confirm:{suggestion_id}", data)
+    assert "Заменено" in result
+
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Cable Row (тяга блока сидя)"
+
+
+def test_callback_repl_reject_does_not_apply():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+
+    fake_suggestion = {
+        "replacement_name": "Cable Row (тяга блока сидя)",
+        "machine": "Кроссовер", "reasoning": "test",
+        "weight_min_kg": 40, "weight_max_kg": 45,
+        "reps_min": 8, "reps_max": 10, "tempo": "2-1-2-0", "rest_sec": 90,
+    }
+    with mock.patch("bot.parser.suggest_replacement", return_value=fake_suggestion):
+        bot.handle_replace_request(data, "занят")
+
+    suggestion_id = data["pending_suggestions"][0]["id"]
+    bot.handle_callback(f"repl:reject:{suggestion_id}", data)
+
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Vertical Traction (тяга сверху к груди)"  # без изменений
+
+
+def test_callback_sugg_prefix_still_works_alongside_repl():
+    # Регрессия: расширение handle_callback под repl не должно сломать
+    # существующую обработку sugg (предложения прогрессии веса)
+    data = w.load_workouts()
+    data["pending_suggestions"] = [{
+        "id": "sugg_test", "exercise": "присед",
+        "suggested_weight_kg": 52.5, "suggested_reps": 8,
+        "reasoning": "x", "message_id": None, "status": "pending",
+        "created_ts": "2026-07-28T00:00:00",
+    }]
+    result = bot.handle_callback("sugg:confirm:sugg_test", data)
+    assert "Принято" in result
+    assert w.get_target(data, "присед")["weight_kg"] == 52.5

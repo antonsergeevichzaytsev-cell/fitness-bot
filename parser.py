@@ -113,3 +113,81 @@ def parse_workout_text(text, max_tokens=500):
         }
 
     return parsed
+
+
+REPLACEMENT_SYS_PROMPT = (
+    "Ты предлагаешь замену силового упражнения — тренажёр занят, "
+    "сломан, или пользователь хочет его заменить. Дай ОДНО альтернативное "
+    "упражнение с тем же паттерном движения (та же мышечная группа, "
+    "похожий вектор нагрузки) на доступном оборудовании тренажёрного зала. "
+    "\n\n"
+    "СТОП-ЛИСТ — НИКОГДА не предлагай: жим штанги от груди/лёжа, "
+    "приседания или гакк-приседания со штангой, выпады любые, жим ногами "
+    "(leg press), разгибание ног сидя (leg extension), румынская тяга со "
+    "штангой, бег/прыжки/степ-аэробика/плиометрика. Это медицинские "
+    "ограничения (травма коленей), не пожелание — нарушать нельзя ни при "
+    "каких обстоятельствах, даже если пользователь сам предложит что-то "
+    "из списка. "
+    "\n\n"
+    "Предложи вес/повторы/темп/отдых для замены, ориентируясь на "
+    "параметры заменяемого упражнения (похожая интенсивность), не выдумывай "
+    "точные числа с нуля — экстраполируй логично. "
+    "\n\n"
+    "Reply ONLY with valid JSON: "
+    '{"replacement_name": str, "machine": str, "reasoning": str, '
+    '"weight_min_kg": float_or_null, "weight_max_kg": float_or_null, '
+    '"reps_min": int, "reps_max": int, "tempo": str, "rest_sec": int}. '
+    "reasoning — короткое объяснение на русском, почему это хорошая замена "
+    "(тот же паттерн движения). weight_min_kg/max — null, если вес "
+    "'по ощущению' уместнее для этой замены."
+)
+
+
+def suggest_replacement(original_exercise, reason=""):
+    """Предлагает замену упражнению через DeepSeek. original_exercise —
+    dict из training_program.json (полный план упражнения, не только
+    имя) — модель видит параметры оригинала для калибровки замены.
+
+    Возвращает dict с ключом replacement_name и параметрами замены, ИЛИ
+    {"error": True, ...} при сбое сети/парсинга. ВАЖНО: результат этой
+    функции НЕ финальная защита от запрещённых упражнений — промпт явно
+    называет стоп-лист, но код (safety.check_exercise на результат)
+    ДОЛЖЕН быть проверен вызывающим кодом (bot.py) перед тем, как
+    показать предложение пользователю — промпт может быть проигнорирован
+    моделью, код-проверка не может (тот же принцип, что и в safety.py)."""
+    if not DEEPSEEK_KEY:
+        return {"error": True, "question": "DEEPSEEK_API_KEY не настроен — не могу предложить замену."}
+
+    user_msg = (
+        f"Заменить: {original_exercise['name']} ({original_exercise['machine']}), "
+        f"план {original_exercise['sets']}x{original_exercise['reps_min']}-{original_exercise['reps_max']}. "
+        f"Причина: {reason or 'не указана'}."
+    )
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": REPLACEMENT_SYS_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 400,
+        "response_format": {"type": "json_object"},
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        DEEPSEEK_URL, data=data,
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}", "Content-Type": "application/json"},
+    )
+    try:
+        with net.urlopen_retry(req, timeout=30) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        content = resp["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+    except Exception as e:
+        print(f"  ! replacement suggestion error: {e}", file=sys.stderr)
+        return {"error": True, "question": "Не удалось предложить замену — DeepSeek недоступен."}
+
+    if not isinstance(parsed, dict) or "replacement_name" not in parsed:
+        return {"error": True, "question": "Не получилось разобрать предложение замены."}
+
+    return parsed
