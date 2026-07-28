@@ -944,3 +944,25 @@ def test_report_shows_only_sleep_without_stress():
     report = sess.build_session_report(data, ["присед"], "2026-07-28", sleep_hours=6.5)
     assert "сон 6.5ч" in report
     assert "стресс" not in report
+
+
+# --- end_session: сохранение в wellness_log ------------------------------
+
+def test_end_session_persists_wellness_to_log():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.set_body_weight(data, 121.0)
+    sess.set_wellness(data, sleep_hours=5.0, stress_level=8, raw_note="плохо")
+    session_date = data["active_session"]["date"]
+    result = sess.end_session(data)
+    logged = w.get_wellness_for_date(data, session_date)
+    assert logged == {"sleep_hours": 5.0, "stress_level": 8}
+    assert result["sleep_hours"] == 5.0  # тоже возвращается в dict для отчёта
+
+
+def test_end_session_does_not_log_when_no_wellness_given():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    session_date = data["active_session"]["date"]
+    sess.end_session(data)
+    assert w.get_wellness_for_date(data, session_date) is None

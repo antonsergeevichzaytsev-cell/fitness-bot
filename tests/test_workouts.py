@@ -14,7 +14,7 @@ def test_load_workouts_missing_file_returns_empty_schema(tmp_path, monkeypatch):
     monkeypatch.setattr(w, "WORKOUTS_PATH", str(fake_path))
     data = w.load_workouts()
     assert data == {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                     "pending_suggestions": [], "targets": {}}
+                     "pending_suggestions": [], "targets": {}, "wellness_log": {}}
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -297,3 +297,37 @@ def test_format_progress_report_respects_limit_sessions():
     report = w.format_progress_report(data, "присед", limit_sessions=3)
     assert "2026-07-01" not in report  # за пределами лимита
     assert "2026-07-05" in report
+
+
+# --- save_wellness_for_date / get_wellness_for_date -----------------------
+
+def test_get_wellness_for_date_none_when_not_recorded():
+    data = w.load_workouts()
+    assert w.get_wellness_for_date(data, "2026-07-28") is None
+
+
+def test_save_and_get_wellness_for_date():
+    data = w.load_workouts()
+    w.save_wellness_for_date(data, "2026-07-28", sleep_hours=7.0, stress_level=4)
+    result = w.get_wellness_for_date(data, "2026-07-28")
+    assert result == {"sleep_hours": 7.0, "stress_level": 4}
+
+
+def test_wellness_log_separate_dates_independent():
+    data = w.load_workouts()
+    w.save_wellness_for_date(data, "2026-07-20", sleep_hours=5.0, stress_level=8)
+    w.save_wellness_for_date(data, "2026-07-27", sleep_hours=8.0, stress_level=2)
+    assert w.get_wellness_for_date(data, "2026-07-20")["sleep_hours"] == 5.0
+    assert w.get_wellness_for_date(data, "2026-07-27")["sleep_hours"] == 8.0
+
+
+def test_load_workouts_missing_wellness_log_key_does_not_crash():
+    # Существующий продакшен-файл, созданный до этой фичи, не имеет
+    # поля wellness_log — load_workouts должна добавить его дефолтом,
+    # не падать при последующих вызовах get_wellness_for_date
+    data = {"schema_version": 1, "sets": [], "exercise_aliases": {},
+            "pending_suggestions": [], "targets": {}}
+    # симулируем то, что делает load_workouts после json.load для
+    # старого файла без wellness_log
+    data.setdefault("wellness_log", {})
+    assert w.get_wellness_for_date(data, "2026-07-28") is None

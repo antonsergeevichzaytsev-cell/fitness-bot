@@ -15,9 +15,11 @@ WORKOUTS_PATH = os.path.join(ROOT, "workouts.json")
 def load_workouts():
     if not os.path.exists(WORKOUTS_PATH):
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                "pending_suggestions": [], "targets": {}}
+                "pending_suggestions": [], "targets": {}, "wellness_log": {}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+        data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
+        return data
 
 
 def save_workouts(data):
@@ -96,6 +98,31 @@ def get_target(data, exercise):
     """Текущая цель по упражнению (вес/повторы на следующую тренировку),
     None если ещё не установлена."""
     return data.get("targets", {}).get(exercise)
+
+
+def save_wellness_for_date(data, date, sleep_hours, stress_level):
+    """Сохраняет дневник самочувствия для конкретной даты тренировки —
+    ПОСТОЯННОЕ хранилище (data['wellness_log']), в отличие от
+    session.py's active_session['sleep_hours']/['stress_level'], которые
+    живут только пока сессия открыта и теряются после end_session.
+
+    Нужно для progression.py: чтобы решить, предлагать ли прогрессию,
+    нужно знать самочувствие КОНКРЕТНОЙ прошедшей тренировки (по дате),
+    не только текущей активной сессии."""
+    data.setdefault("wellness_log", {})[date] = {
+        "sleep_hours": sleep_hours,
+        "stress_level": stress_level,
+    }
+
+
+def get_wellness_for_date(data, date):
+    """Возвращает {"sleep_hours": ..., "stress_level": ...} для даты,
+    или None если для этой даты дневник не заполнялся (тренировка была
+    до появления этой фичи, или Антон ответил без чисел свободным
+    текстом типа 'нормально' — в таком случае save_wellness_for_date
+    всё равно вызывается с обоими None, что отличается от отсутствия
+    записи вообще: 'заполнил, но не дал числа' vs 'не заполнял'."""
+    return data.get("wellness_log", {}).get(date)
 
 
 def format_progress_report(data, exercise, limit_sessions=10):

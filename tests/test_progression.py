@@ -150,3 +150,104 @@ def test_format_suggestion_message_includes_key_info():
     assert "тестовое обоснование" in text
     assert "32.5" in text
     assert "8" in text
+
+
+# --- wellness-блокировка прогрессии --------------------------------------
+# Согласовано с Антоном 28.07.2026: плохой сон (<6ч) ИЛИ высокий стресс
+# (>=7) в ЛЮБОЙ из последних сессий блокирует прогрессию, даже если
+# подходы формально были чистые (пошаговый флоу всегда пишет
+# план-максимум, не то, что реально удалось "через силу").
+
+def test_progression_allowed_with_good_wellness():
+    data = w.load_workouts()
+    for date in ["2026-07-20", "2026-07-27"]:
+        w.add_set(data, "жим лёжа гантели", date, 30.0, 12, 1)
+        w.save_wellness_for_date(data, date, sleep_hours=8.0, stress_level=3)
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is not None
+
+
+def test_progression_blocked_by_low_sleep():
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-20", sleep_hours=8.0, stress_level=3)
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-27", sleep_hours=5.0, stress_level=3)  # < 6ч
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is None
+
+
+def test_progression_blocked_by_high_stress():
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-20", sleep_hours=8.0, stress_level=8)  # >= 7
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-27", sleep_hours=8.0, stress_level=3)
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is None
+
+
+def test_progression_blocked_regardless_of_which_session():
+    # Плохое самочувствие в ПЕРВОЙ из двух сессий блокирует так же, как
+    # во второй — проверяется 'любая из последних', не только последняя
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-20", sleep_hours=4.0, stress_level=3)
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 12, 1)
+    w.save_wellness_for_date(data, "2026-07-27", sleep_hours=8.0, stress_level=3)
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is None
+
+
+def test_progression_not_blocked_without_wellness_data():
+    # Отсутствие данных о самочувствии (тренировка была до фичи, или
+    # Антон не заполнял) — НЕ блокирует, блокирует только
+    # подтверждённое плохое самочувствие
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 12, 1)
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 12, 1)
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is not None
+
+
+def test_progression_boundary_sleep_exactly_6h_not_blocked():
+    data = w.load_workouts()
+    for date in ["2026-07-20", "2026-07-27"]:
+        w.add_set(data, "жим лёжа гантели", date, 30.0, 12, 1)
+        w.save_wellness_for_date(data, date, sleep_hours=6.0, stress_level=3)  # ровно 6, не < 6
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is not None
+
+
+def test_progression_boundary_stress_exactly_7_blocked():
+    data = w.load_workouts()
+    for date in ["2026-07-20", "2026-07-27"]:
+        w.add_set(data, "жим лёжа гантели", date, 30.0, 12, 1)
+        w.save_wellness_for_date(data, date, sleep_hours=8.0, stress_level=7)  # ровно 7, >= 7
+    result = p.suggest_progression(data, "жим лёжа гантели")
+    assert result is None
+
+
+# --- _session_wellness_bad -----------------------------------------
+
+def test_session_wellness_bad_none_wellness_returns_false():
+    data = w.load_workouts()
+    assert p._session_wellness_bad(data, "2026-07-28") is False
+
+
+def test_session_wellness_bad_only_sleep_recorded():
+    data = w.load_workouts()
+    w.save_wellness_for_date(data, "2026-07-28", sleep_hours=5.0, stress_level=None)
+    assert p._session_wellness_bad(data, "2026-07-28") is True
+
+
+def test_session_wellness_bad_only_stress_recorded():
+    data = w.load_workouts()
+    w.save_wellness_for_date(data, "2026-07-28", sleep_hours=None, stress_level=8)
+    assert p._session_wellness_bad(data, "2026-07-28") is True
+
+
+def test_session_wellness_bad_both_good():
+    data = w.load_workouts()
+    w.save_wellness_for_date(data, "2026-07-28", sleep_hours=8.0, stress_level=3)
+    assert p._session_wellness_bad(data, "2026-07-28") is False

@@ -29,6 +29,8 @@ MIN_SESSIONS_FOR_SUGGESTION = 2  # меньше — не с чем сравни�
 WEIGHT_STEP_KG = 2.5             # стандартный шаг для гантелей/блинов в большинстве залов
 HIGH_RPE_THRESHOLD = 9           # RPE >= это — не предлагаем прогрессию, тело сигналит "хватит"
 HARD_NOTE_KEYWORDS = ["тяжело", "на грани", "с трудом", "еле", "через силу"]
+LOW_SLEEP_THRESHOLD_HOURS = 6    # сон < это — прогрессия не предлагается на основе этой тренировки
+HIGH_STRESS_THRESHOLD = 7        # стресс >= это (шкала 1-10) — прогрессия не предлагается
 
 
 def _session_all_at_top_of_range(session_sets, rep_range):
@@ -50,6 +52,24 @@ def _session_shows_difficulty(session_sets):
         note = (s.get("note") or "").lower()
         if any(kw in note for kw in HARD_NOTE_KEYWORDS):
             return True
+    return False
+
+
+def _session_wellness_bad(data, session_date):
+    """True, если для даты сессии есть запись в wellness_log И (сон <
+    LOW_SLEEP_THRESHOLD_HOURS ИЛИ стресс >= HIGH_STRESS_THRESHOLD).
+    Отсутствие записи о самочувствии (тренировка была до этой фичи, или
+    Антон не заполнял дневник) НЕ блокирует прогрессию — блокирует
+    только ПОДТВЕРЖДЁННОЕ плохое самочувствие, не его отсутствие."""
+    wellness = w.get_wellness_for_date(data, session_date)
+    if wellness is None:
+        return False
+    sleep_hours = wellness.get("sleep_hours")
+    stress_level = wellness.get("stress_level")
+    if sleep_hours is not None and sleep_hours < LOW_SLEEP_THRESHOLD_HOURS:
+        return True
+    if stress_level is not None and stress_level >= HIGH_STRESS_THRESHOLD:
+        return True
     return False
 
 
@@ -84,6 +104,15 @@ def suggest_progression(data, exercise, rep_range=None):
     # ложный "рано расти" безвреден, ложный "пора расти" при реальной
     # усталости — риск травмы или перетренированности.
     if any(_session_shows_difficulty(sess["sets"]) for sess in recent_sessions):
+        return None
+
+    # Тот же принцип для самочувствия (согласовано с Антоном 28.07.2026):
+    # плохой сон (<6ч) ИЛИ высокий стресс (>=7) в ЛЮБОЙ из последних
+    # сессий блокирует прогрессию — даже если подходы формально были
+    # чистые (пошаговый флоу всегда пишет план-максимум, см. bot.py, не
+    # то, что реально удалось "через силу"). Отсутствие данных о
+    # самочувствии НЕ блокирует — блокирует только подтверждённое плохое.
+    if any(_session_wellness_bad(data, sess["date"]) for sess in recent_sessions):
         return None
 
     all_at_top = all(_session_all_at_top_of_range(sess["sets"], rep_range) for sess in recent_sessions)

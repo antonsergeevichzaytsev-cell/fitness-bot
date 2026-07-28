@@ -519,6 +519,14 @@ def end_session(data):
         "wellness_note": session.get("wellness_note", ""),
     }
 
+    # ПОСТОЯННОЕ хранилище по дате — раньше самочувствие исчезало вместе
+    # с active_session сразу после отчёта, теперь progression.py может
+    # проверить самочувствие КОНКРЕТНОЙ прошедшей тренировки при решении
+    # о прогрессии. Сохраняем только если хоть одно значение задано —
+    # не создаём пустую запись 'заполнил, но всё None' без причины.
+    if session.get("sleep_hours") is not None or session.get("stress_level") is not None:
+        w.save_wellness_for_date(data, session_date, session.get("sleep_hours"), session.get("stress_level"))
+
     data["active_session"] = None
     return result
 
