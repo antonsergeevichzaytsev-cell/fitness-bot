@@ -10,12 +10,21 @@ concurrency:
   queue: max
 
 on:
-  # Раньше здесь был cron '*/5 * * * *' (опрос каждые 5 минут). Заменено
-  # 28.07.2026: бот теперь запускается по Telegram webhook через
-  # Cloudflare Worker (см. cloudflare-worker/), не по расписанию —
-  # мгновенный отклик вместо ожидания до 5 минут, и бот не тратит
-  # прогоны CI вне активной тренировки.
-  workflow_dispatch: {}
+  # 28.07.2026: КРИТИЧНЫЙ ФИКС — раньше здесь был cron, потом
+  # workflow_dispatch с bot.py, читающим getUpdates. Оказалось:
+  # getUpdates и активный webhook ВЗАИМОИСКЛЮЧАЮЩИ (Telegram API отдаёт
+  # апдейты либо туда, либо туда, не в оба места сразу) — с активным
+  # webhook getUpdates просто не видел новых сообщений, tg_offset не
+  # двигался, бот молчал. Первое реальное сообщение Антона ("упражнения
+  # на бицепс", 13:31 МСК) прошло цепочку Worker->GitHub Actions
+  # успешно, но bot.py внутри не получил апдейт.
+  #
+  # Исправлено: Worker теперь шлёт repository_dispatch с самим телом
+  # Telegram update в client_payload — bot.py читает апдейт ОТТУДА
+  # (переменная TELEGRAM_UPDATE_JSON), не через повторный getUpdates.
+  repository_dispatch:
+    types: [telegram_update]
+  workflow_dispatch: {}  # для ручной проверки/отладки без реального апдейта
 
 permissions:
   contents: write
@@ -38,6 +47,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          TELEGRAM_UPDATE_JSON: ${{ toJson(github.event.client_payload.update) }}
         run: python bot.py
 
       - name: Commit workouts + state

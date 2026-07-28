@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """Fitness bot — главный обработчик.
 
-Запускается по Telegram webhook через Cloudflare Worker (не по
-расписанию — убрано 28.07.2026, было cron каждые 5 минут, заменено на
-мгновенный отклик и отсутствие лишних прогонов вне тренировки).
+Запускается по Telegram webhook через Cloudflare Worker + GitHub
+repository_dispatch (см. cloudflare-worker/worker.js).
+
+28.07.2026 КРИТИЧНЫЙ ФИКС: изначально апдейт читался через getUpdates
+после того, как Worker дёргал workflow_dispatch. Не работает — Telegram
+API не даёт getUpdates и активному webhook работать одновременно
+(апдейты уходят либо туда, либо туда). Первое реальное сообщение
+прошло всю цепочку успешно (Worker -> GitHub Actions), но bot.py внутри
+не получил его — бот молчал. Исправлено: Worker теперь передаёт САМО
+ТЕЛО Telegram update через repository_dispatch client_payload, GitHub
+Actions кладёт его в переменную TELEGRAM_UPDATE_JSON — bot.py читает
+оттуда напрямую, не делает сетевой запрос к Telegram вообще.
 
 Поток:
 0. Session gate (session.py, ДЕТЕРМИНИРОВАННО, не через DeepSeek):
@@ -11,8 +20,9 @@
    отчёт по всем упражнениям сессии с трендами (тоннаж vs прошлая
    тренировка) и закрывает сессию. И то и другое — короткий путь,
    не доходит до парсинга через DeepSeek.
-1. getUpdates (с offset, как filings.py) — забирает и текстовые
-   сообщения, и callback_query (нажатия кнопок).
+1. Апдейт читается из TELEGRAM_UPDATE_JSON (один Update объект —
+   message или callback_query, ровно тот, что Telegram прислал на
+   webhook). workflow_dispatch без payload -> No-op, не падает.
 2. Текстовое сообщение (не начало/конец сессии) -> parser.parse_workout_text():
    - uncertain=true -> переспрашиваем конкретным вопросом, НЕ пишем
      в workouts.json (неверная запись веса портит историю прогрессии
@@ -79,6 +89,12 @@ def esc(s):
 
 
 def tg_get_updates(offset):
+    """НЕ ИСПОЛЬЗУЕТСЯ с 28.07.2026 (см. фикс в docstring модуля) —
+    getUpdates не работает, пока активен webhook. Оставлена в коде
+    как задокументированный факт "это не работает так, как кажется
+    интуитивно", не как рабочий путь. Если когда-нибудь понадобится
+    вернуться к polling — сначала deleteWebhook, иначе Telegram
+    вернёт 409 Conflict."""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     params = {"timeout": 0, "allowed_updates": json.dumps(["message", "callback_query"])}
     if offset:
@@ -229,14 +245,31 @@ def main():
     state = load_state()
     data = w.load_workouts()
 
-    offset = state.get("tg_offset") or 0
-    updates = tg_get_updates(offset + 1 if offset else None)
+    # 28.07.2026 ФИКС: раньше здесь был tg_get_updates(offset) — не
+    # работает, пока активен webhook (Telegram API: getUpdates и webhook
+    # взаимоисключающи, апдейты уходят только куда-то одно). Теперь
+    # апдейт приходит готовым через repository_dispatch client_payload
+    # (см. worker.js и fitness_bot.yml) — GitHub Actions кладёт его в
+    # переменную окружения как JSON-строку.
+    raw_update = os.environ.get("TELEGRAM_UPDATE_JSON", "")
+    if not raw_update or raw_update == "null":
+        # workflow_dispatch (ручной запуск без реального апдейта) —
+        # безопасно ничего не делать, не падать. Полезно для проверки,
+        # что сам CI-прогон вообще работает.
+        print("No update payload — manual run or empty dispatch, nothing to do.")
+        return 0
+
+    try:
+        u = json.loads(raw_update)
+    except json.JSONDecodeError as e:
+        print(f"  ! failed to parse TELEGRAM_UPDATE_JSON: {e}", file=sys.stderr)
+        return 1
+
+    updates = [u]  # старый код ниже работает со списком апдейтов — оставляем форму
 
     outgoing = []  # список (text, reply_markup_or_None) для отправки после обработки всех апдейтов
 
     for u in updates:
-        state["tg_offset"] = max(state.get("tg_offset") or 0, u.get("update_id", 0))
-
         cb = u.get("callback_query")
         if cb:
             result_text = handle_callback(cb.get("data", ""), data)

@@ -2,21 +2,23 @@
  * Fitness bot webhook relay.
  *
  * Telegram шлёт сюда POST при каждом новом сообщении/callback_query
- * (настроено через setWebhook). Worker НЕ обрабатывает сам текст —
- * вся логика (parser.py, workouts.py, progression.py, session.py)
- * остаётся в GitHub-репозитории, уже написана и протестирована (92
- * теста). Worker — тонкий прокси: получил webhook -> дёрнул
- * workflow_dispatch на bot.py -> тот сам заново читает то же
- * сообщение через getUpdates (Telegram хранит недоставленные апдейты
- * some время) и обрабатывает как обычно.
+ * (настроено через setWebhook).
  *
- * Секреты (GITHUB_TOKEN, TELEGRAM_SECRET_TOKEN) хранятся в Cloudflare
- * Worker Secrets (Settings -> Variables -> Encrypt), не в этом файле.
+ * 28.07.2026 ФИКС: изначально этот Worker дёргал workflow_dispatch,
+ * а bot.py заново читал сообщение через getUpdates. Оказалось — это
+ * не работает: getUpdates и активный webhook взаимоисключающи в
+ * Telegram API (апдейты уходят либо туда, либо туда, не в оба места
+ * сразу). Первое реальное сообщение прошло всю цепочку, но bot.py
+ * внутри не увидел его — offset не двигался, бот молчал.
+ *
+ * Исправлено: Worker теперь передаёт САМО ТЕЛО update через
+ * repository_dispatch client_payload — bot.py читает апдейт прямо
+ * оттуда (переменная окружения TELEGRAM_UPDATE_JSON), не делает
+ * повторный сетевой запрос к Telegram вообще.
  */
 
 const GITHUB_OWNER = "antonsergeevichzaytsev-cell";
 const GITHUB_REPO = "fitness-bot";
-const WORKFLOW_FILE = "fitness_bot.yml";
 
 export default {
   async fetch(request, env) {
@@ -24,18 +26,20 @@ export default {
       return new Response("ok", { status: 200 });
     }
 
-    // Telegram позволяет задать secret_token при setWebhook — Telegram
-    // присылает его в заголовке X-Telegram-Bot-Api-Secret-Token на
-    // КАЖДОМ запросе. Проверка защищает от того, что кто-то посторонний
-    // найдёт URL Worker'а и начнёт слать поддельные "апдейты", которые
-    // без этой проверки дёргали бы GitHub Actions вхолостую (и жгли
-    // бы минуты CI на чужие запросы).
     const receivedSecret = request.headers.get("X-Telegram-Bot-Api-Secret-Token");
     if (receivedSecret !== env.TELEGRAM_SECRET_TOKEN) {
       return new Response("forbidden", { status: 403 });
     }
 
-    const dispatchUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`;
+    let update;
+    try {
+      update = await request.json();
+    } catch (e) {
+      console.log(`failed to parse Telegram update body: ${e}`);
+      return new Response("ok", { status: 200 });
+    }
+
+    const dispatchUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/dispatches`;
 
     const resp = await fetch(dispatchUrl, {
       method: "POST",
@@ -45,16 +49,18 @@ export default {
         "Content-Type": "application/json",
         "User-Agent": "fitness-bot-worker",
       },
-      body: JSON.stringify({ ref: "main" }),
+      body: JSON.stringify({
+        event_type: "telegram_update",
+        client_payload: { update },
+      }),
     });
 
     if (!resp.ok) {
       const body = await resp.text();
-      console.log(`workflow_dispatch failed: ${resp.status} ${body}`);
-      // Telegram ретраит webhook, если получает не-2xx — намеренно
-      // возвращаем 200 даже при сбое dispatch, чтобы Telegram не
-      // забомбардировал повторами один и тот же неудачный webhook.
-      // Ошибка видна в Worker logs (console.log выше), не теряется молча.
+      console.log(`repository_dispatch failed: ${resp.status} ${body}`);
+      // Telegram ретраит webhook при не-2xx ответе — намеренно
+      // возвращаем 200 даже при сбое dispatch, чтобы не забомбардировал
+      // повторами один неудачный webhook. Ошибка видна в Worker logs.
     }
 
     return new Response("ok", { status: 200 });
