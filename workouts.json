@@ -1,6 +1,46 @@
 {
   "schema_version": 1,
-  "sets": [],
+  "sets": [
+    {
+      "id": "s_501acb3398ffddc9",
+      "date": "2026-07-28",
+      "exercise": "жим лежа гантелями",
+      "exercise_raw": "жим лежа гантелями",
+      "weight_kg": 30,
+      "reps": 10,
+      "set_number": 1,
+      "rpe": null,
+      "note": "",
+      "safety_status": "ok",
+      "ts": "2026-07-28T10:43:49.159483+00:00"
+    },
+    {
+      "id": "s_4dfa93fce1264f84",
+      "date": "2026-07-28",
+      "exercise": "жим лежа гантелями",
+      "exercise_raw": "жим лежа гантелями",
+      "weight_kg": 30,
+      "reps": 10,
+      "set_number": 2,
+      "rpe": null,
+      "note": "",
+      "safety_status": "ok",
+      "ts": "2026-07-28T10:43:49.159542+00:00"
+    },
+    {
+      "id": "s_865c4d988174a842",
+      "date": "2026-07-28",
+      "exercise": "жим лежа гантелями",
+      "exercise_raw": "жим лежа гантелями",
+      "weight_kg": 30,
+      "reps": 10,
+      "set_number": 3,
+      "rpe": null,
+      "note": "",
+      "safety_status": "ok",
+      "ts": "2026-07-28T10:43:49.159588+00:00"
+    }
+  ],
   "exercise_aliases": {},
   "pending_suggestions": [],
   "targets": {}
