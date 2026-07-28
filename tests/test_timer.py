@@ -100,3 +100,94 @@ def test_main_does_not_call_save_workouts_when_no_action():
          mock.patch("timer.w.save_workouts") as mock_save:
         timer.main()
     mock_save.assert_not_called()
+
+
+# --- ежедневное напоминание о тренировке -----------------------------
+
+def test_build_daily_reminder_text_includes_day_name():
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)  # понедельник
+        text = timer.build_daily_reminder_text()
+    assert "День 1" in text
+    assert "Спина" in text
+    assert "начал" in text
+
+
+def test_main_sends_daily_reminder_when_due():
+    data = w.load_workouts()
+    data["sets"] = []
+    late_monday = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)  # 19:00 МСК
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.save_workouts"), \
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime") as mock_sess_dt, \
+         mock.patch("program.datetime") as mock_prog_dt:
+        mock_sess_dt.now.return_value = late_monday
+        mock_prog_dt.now.return_value = late_monday
+        result = timer.main()
+
+    assert result == 0
+    assert len(sent) == 1
+    assert "День 1" in sent[0]
+    assert data["daily_reminder_sent_date"] == "2026-07-27"
+
+
+def test_main_no_daily_reminder_on_rest_day():
+    data = w.load_workouts()
+    data["sets"] = []
+    late_tuesday = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)  # 19:00 МСК, вторник
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime") as mock_sess_dt, \
+         mock.patch("program.datetime") as mock_prog_dt:
+        mock_sess_dt.now.return_value = late_tuesday
+        mock_prog_dt.now.return_value = late_tuesday
+        timer.main()
+
+    assert sent == []
+
+
+def test_main_no_daily_reminder_if_already_trained():
+    data = w.load_workouts()
+    data["sets"] = [{"date": "2026-07-27", "exercise": "присед", "weight_kg": 50, "reps": 8, "set_number": 1}]
+    late_monday = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime") as mock_sess_dt, \
+         mock.patch("program.datetime") as mock_prog_dt:
+        mock_sess_dt.now.return_value = late_monday
+        mock_prog_dt.now.return_value = late_monday
+        timer.main()
+
+    assert sent == []
+
+
+def test_main_rest_timer_and_daily_reminder_are_independent():
+    # Оба could в теории сработать в одном прогоне (не через elif) —
+    # хотя на практике взаимоисключающи (rest timer требует активной
+    # сессии, daily reminder требует её отсутствия сегодня), тест
+    # фиксирует независимость проверок как контракт, не полагается на
+    # эту взаимоисключаемость как гарантию
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    data["active_session"]["resting_until"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=10)
+    ).isoformat()
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.save_workouts"), \
+         mock.patch("timer.w.load_workouts", return_value=data):
+        timer.main()
+
+    # только rest reminder — есть активная сессия сегодня, значит
+    # already_trained=True для daily reminder (проверка по data['sets'])
+    assert len(sent) == 1
+    assert "Отдых закончился" in sent[0]

@@ -146,6 +146,50 @@ def extract_progress_query(text):
     return ""
 
 
+DAILY_REMINDER_HOUR_MSK = 18  # 18:00 МСК — разумный дефолт, точное время не выбрано (открытый вопрос)
+MSK_OFFSET_HOURS = 3
+
+
+def should_send_daily_reminder(data, now=None):
+    """True, если сегодня тренировочный день по расписанию, время уже
+    >= DAILY_REMINDER_HOUR_MSK, тренировка сегодня ещё не была начата
+    (ни одной записи с сегодняшней датой в data['sets']), и напоминание
+    на сегодня ещё не отправлено (data['daily_reminder_sent_date'] !=
+    сегодняшняя дата).
+
+    Проверяется по факту записей (data['sets']), не по active_session —
+    сессия могла быть уже закрыта ('закончил'), а активной может не
+    быть вообще, но тренировка технически состоялась."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    msk_now = now + timedelta(hours=MSK_OFFSET_HOURS)
+
+    if prog.today_day_id(now) is None:
+        return False  # сегодня не тренировочный день
+    if msk_now.hour < DAILY_REMINDER_HOUR_MSK:
+        return False  # ещё рано
+
+    today_str = msk_now.date().isoformat()
+    if data.get("daily_reminder_sent_date") == today_str:
+        return False  # уже напомнили сегодня
+
+    already_trained = any(s["date"] == today_str for s in data.get("sets", []))
+    if already_trained:
+        return False
+
+    return True
+
+
+def mark_daily_reminder_sent(data, now=None):
+    """Помечает, что напоминание на сегодня (по МСК-дате) отправлено —
+    не даёт Cron Trigger'у слать его повторно на следующих прогонах
+    этого же дня."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    msk_now = now + timedelta(hours=MSK_OFFSET_HOURS)
+    data["daily_reminder_sent_date"] = msk_now.date().isoformat()
+
+
 def skip_exercise(data):
     """Пропускает текущее упражнение целиком (не записывая ни одного
     подхода) — переходит на следующее упражнение в дне, как будто оно

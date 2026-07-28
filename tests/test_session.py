@@ -777,3 +777,59 @@ def test_apply_replacement_advance_position_records_replacement_name():
     assert data["sets"][-1]["exercise"] == "cable row замена"
 
 
+
+
+# --- should_send_daily_reminder / mark_daily_reminder_sent ---------------
+
+def test_daily_reminder_false_too_early():
+    data = w.load_workouts()
+    early = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)  # 15:00 МСК
+    assert sess.should_send_daily_reminder(data, now=early) is False
+
+
+def test_daily_reminder_true_after_hour_no_training():
+    data = w.load_workouts()
+    late = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)  # 19:00 МСК, понедельник
+    assert sess.should_send_daily_reminder(data, now=late) is True
+
+
+def test_daily_reminder_false_on_rest_day():
+    data = w.load_workouts()
+    tuesday_late = datetime(2026, 7, 28, 16, 0, tzinfo=timezone.utc)  # 19:00 МСК, вторник
+    assert sess.should_send_daily_reminder(data, now=tuesday_late) is False
+
+
+def test_daily_reminder_false_when_already_trained_today():
+    data = w.load_workouts()
+    data["sets"] = [{"date": "2026-07-27", "exercise": "присед", "weight_kg": 50, "reps": 8, "set_number": 1}]
+    late = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)
+    assert sess.should_send_daily_reminder(data, now=late) is False
+
+
+def test_daily_reminder_false_after_already_sent():
+    data = w.load_workouts()
+    late = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)
+    sess.mark_daily_reminder_sent(data, now=late)
+    assert sess.should_send_daily_reminder(data, now=late) is False
+
+
+def test_daily_reminder_resets_next_training_day():
+    # Напоминание отправлено в понедельник — во вторник (день отдыха)
+    # проверка всё равно False (день отдыха), но в СЛЕДУЮЩУЮ среду
+    # (другая дата) должно снова сработать, раз daily_reminder_sent_date
+    # хранит конкретную дату, не флаг навсегда
+    data = w.load_workouts()
+    monday = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)
+    sess.mark_daily_reminder_sent(data, now=monday)
+    wednesday_late = datetime(2026, 7, 29, 16, 0, tzinfo=timezone.utc)
+    assert sess.should_send_daily_reminder(data, now=wednesday_late) is True
+
+
+def test_mark_daily_reminder_sent_stores_msk_date():
+    data = w.load_workouts()
+    # 23:30 UTC = 02:30 МСК следующего дня — проверяем, что дата
+    # считается по МСК, не по UTC (иначе поздно вечером напоминание
+    # 'сбросилось' бы преждевременно из-за смены даты в UTC)
+    late_utc = datetime(2026, 7, 27, 23, 30, tzinfo=timezone.utc)
+    sess.mark_daily_reminder_sent(data, now=late_utc)
+    assert data["daily_reminder_sent_date"] == "2026-07-28"  # МСК уже следующий день
