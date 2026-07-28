@@ -51,10 +51,8 @@ def test_start_session_idempotent():
 
 def test_end_session_without_start_returns_none():
     data = w.load_workouts()
-    exercises, date, day_id = sess.end_session(data)
-    assert exercises is None
-    assert date is None
-    assert day_id is None
+    result = sess.end_session(data)
+    assert result is None
 
 
 def test_end_session_closes_active_session():
@@ -63,24 +61,24 @@ def test_end_session_closes_active_session():
     session_date = data["active_session"]["date"]
     w.add_set(data, "присед", session_date, 50.0, 8, 1)
 
-    exercises, date, day_id = sess.end_session(data)
-    assert exercises == ["присед"]
-    assert date == session_date
+    result = sess.end_session(data)
+    assert result["exercises"] == ["присед"]
+    assert result["date"] == session_date
     assert sess.is_session_active(data) is False
 
 
 def test_end_session_returns_day_id():
     data = w.load_workouts()
     sess.start_session(data, day_id="1")
-    exercises, date, day_id = sess.end_session(data)
-    assert day_id == "1"
+    result = sess.end_session(data)
+    assert result["day_id"] == "1"
 
 
 def test_end_session_day_id_none_when_started_without_program():
     data = w.load_workouts()
     sess.start_session(data)  # без day_id — например, день отдыха
-    exercises, date, day_id = sess.end_session(data)
-    assert day_id is None
+    result = sess.end_session(data)
+    assert result["day_id"] is None
 
 
 def test_end_session_collects_multiple_exercises():
@@ -90,18 +88,42 @@ def test_end_session_collects_multiple_exercises():
     w.add_set(data, "присед", session_date, 50.0, 8, 1)
     w.add_set(data, "жим лёжа гантели", session_date, 30.0, 10, 1)
 
-    exercises, _, _ = sess.end_session(data)
-    assert exercises == ["жим лёжа гантели", "присед"]  # отсортировано
+    result = sess.end_session(data)
+    assert result["exercises"] == ["жим лёжа гантели", "присед"]  # отсортировано
 
 
 def test_end_session_ignores_sets_from_other_dates():
     data = w.load_workouts()
     w.add_set(data, "присед", "2026-07-01", 50.0, 8, 1)  # старая запись, не сегодняшняя
     sess.start_session(data)
-    session_date = data["active_session"]["date"]
 
-    exercises, _, _ = sess.end_session(data)
-    assert exercises == []  # ничего не записано именно в этой сессии
+    result = sess.end_session(data)
+    assert result["exercises"] == []  # ничего не записано именно в этой сессии
+
+
+def test_end_session_returns_body_weight():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.set_body_weight(data, 121.5)
+    result = sess.end_session(data)
+    assert result["body_weight_kg"] == 121.5
+
+
+def test_end_session_body_weight_none_when_not_set():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    result = sess.end_session(data)
+    assert result["body_weight_kg"] is None
+
+
+def test_end_session_returns_duration_minutes():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    data["active_session"]["started_ts"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=45)
+    ).isoformat()
+    result = sess.end_session(data)
+    assert 44.5 <= result["duration_minutes"] <= 45.5
 
 
 # --- build_session_report -----------------------------------------------
@@ -133,7 +155,10 @@ def test_report_no_trend_line_when_no_prior_session():
     data = w.load_workouts()
     w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
     report = sess.build_session_report(data, ["присед"], "2026-07-28")
-    assert "тоннаж" not in report  # нет истории — нет тренда
+    # "тоннаж +N% к прошлой тренировке" — per-exercise тренд, отсутствует
+    # без истории. "Итого тоннаж" (summary в конце отчёта) — другая
+    # секция, показывается всегда, тест проверяет именно тренд-фразу.
+    assert "к прошлой тренировке" not in report
 
 
 def test_report_multiple_exercises():
@@ -174,6 +199,50 @@ def test_report_falls_back_to_trend_when_exercise_not_in_day_plan():
     report = sess.build_session_report(data, ["совсем другое упражнение"], "2026-07-28", day_id="1")
     assert "совсем другое упражнение" in report
     assert "план:" not in report
+
+
+# --- build_session_report: тоннаж и калории -----------------------------
+
+def test_report_shows_total_tonnage():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    w.add_set(data, "жим лёжа", "2026-07-28", 30.0, 10, 1)
+    report = sess.build_session_report(data, ["присед", "жим лёжа"], "2026-07-28")
+    # 50*8 + 30*10 = 400 + 300 = 700
+    assert "Итого тоннаж" in report
+    assert "700" in report
+
+
+def test_report_shows_calories_when_weight_and_duration_given():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(
+        data, ["присед"], "2026-07-28", body_weight_kg=121.0, duration_minutes=60.0
+    )
+    assert "Оценка калорий" in report
+    # 60 * (3.5*3.5*121)/200 = 444.675 -> round 445
+    assert "445" in report
+
+
+def test_report_no_calories_without_weight():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28", duration_minutes=60.0)
+    assert "Оценка калорий" not in report
+
+
+def test_report_no_calories_without_duration():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28", body_weight_kg=121.0)
+    assert "Оценка калорий" not in report
+
+
+def test_report_tonnage_always_shown_even_without_calories():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28")
+    assert "Итого тоннаж" in report
 
 
 # --- _format_trend ---------------------------------------------------
@@ -372,5 +441,95 @@ def test_new_set_resets_reminder_sent_flag():
 def test_mark_reminder_sent_no_active_session_does_not_crash():
     data = w.load_workouts()
     sess.mark_reminder_sent(data)  # не должно упасть без активной сессии
+
+
+# --- is_extend_rest_request / extract_extend_seconds -----------------
+
+def test_is_extend_rest_request_matches_keywords():
+    for text in ["продли отдых", "продли на 30", "ещё минуту", "ещё секунд 20",
+                 "устал", "нужно больше времени", "добавь времени"]:
+        assert sess.is_extend_rest_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_extend_rest_request_false_for_workout_log():
+    assert sess.is_extend_rest_request("присед 50 на 8") is False
+
+
+def test_is_extend_rest_request_false_for_set_confirmation():
+    assert sess.is_extend_rest_request("взял") is False
+
+
+def test_extract_extend_seconds_plain_number():
+    assert sess.extract_extend_seconds("продли на 30") == 30
+    assert sess.extract_extend_seconds("продли на 45") == 45
+
+
+def test_extract_extend_seconds_explicit_seconds():
+    assert sess.extract_extend_seconds("ещё 20 сек") == 20
+
+
+def test_extract_extend_seconds_one_minute_no_digit():
+    assert sess.extract_extend_seconds("ещё минуту") == 60
+
+
+def test_extract_extend_seconds_multiple_minutes():
+    assert sess.extract_extend_seconds("ещё 2 минуты") == 120
+
+
+def test_extract_extend_seconds_default_when_no_number():
+    assert sess.extract_extend_seconds("устал") == 30
+
+
+def test_extract_extend_seconds_custom_default():
+    assert sess.extract_extend_seconds("устал", default_sec=60) == 60
+
+
+# --- extend_rest -----------------------------------------------------
+
+def test_extend_rest_no_active_session_returns_none():
+    data = w.load_workouts()
+    assert sess.extend_rest(data, 30) is None
+
+
+def test_extend_rest_no_resting_until_returns_none():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")  # начал, но ещё ни одного подхода
+    assert sess.extend_rest(data, 30) is None
+
+
+def test_extend_rest_adds_seconds_before_expiry():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    before = datetime.fromisoformat(data["active_session"]["resting_until"])
+    sess.extend_rest(data, 30)
+    after = datetime.fromisoformat(data["active_session"]["resting_until"])
+    assert abs((after - before).total_seconds() - 30) < 1
+
+
+def test_extend_rest_after_expiry_extends_from_now_not_from_past():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    # искусственно истекаем таймер в прошлое
+    data["active_session"]["resting_until"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=50)
+    ).isoformat()
+    new_val = sess.extend_rest(data, 30)
+    new_dt = datetime.fromisoformat(new_val)
+    now = datetime.now(timezone.utc)
+    # новое время должно быть ~30 сек ОТ СЕЙЧАС, не ~-20 сек (что было бы,
+    # если бы продление считалось от старого resting_until в прошлом)
+    assert abs((new_dt - now).total_seconds() - 30) < 2
+
+
+def test_extend_rest_resets_reminder_sent():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    sess.mark_reminder_sent(data)
+    assert data["active_session"]["reminder_sent"] is True
+    sess.extend_rest(data, 30)
+    assert data["active_session"]["reminder_sent"] is False
 
 

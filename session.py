@@ -10,14 +10,17 @@ Session state хранится в workouts.json (data['active_session']) — н�
 отдельным файлом, чтобы не рассинхронизировать с основным состоянием
 при параллельных прогонах.
 """
+import re
 from datetime import datetime, timedelta, timezone
 
+import calories as cal
 import program as prog
 import workouts as w
 
 START_KEYWORDS = ["начал", "начинаю", "старт", "погнали", "поехали тренир"]
 END_KEYWORDS = ["закончил", "конец тренировки", "финиш", "всё, закончили", "готово с тренировкой"]
 SET_DONE_KEYWORDS = ["взял", "готово", "сделал", "есть"]
+EXTEND_REST_KEYWORDS = ["продли", "ещё минут", "ещё секунд", "устал", "нужно больше", "добавь врем"]
 
 
 def is_session_start(text):
@@ -42,6 +45,51 @@ def is_set_confirmation(text):
     return any(kw in t for kw in SET_DONE_KEYWORDS)
 
 
+def is_extend_rest_request(text):
+    """'продли отдых', 'ещё минуту', 'устал, нужно больше времени' —
+    просьба продлить текущий таймер отдыха. Тоже детерминированно, не
+    DeepSeek: короткая команда, требующая мгновенной реакции, не
+    сложного понимания контекста."""
+    t = text.strip().lower()
+    return any(kw in t for kw in EXTEND_REST_KEYWORDS)
+
+
+def parse_weight_kg(text):
+    """Извлекает число (вес в кг) из ответа на вопрос 'сколько сейчас
+    весишь' — '121', '121.5', '121,5 кг', 'где-то 120'. Детерминированно
+    (regex), не DeepSeek: простое число, не требует понимания контекста.
+    Возвращает float или None, если число не найдено."""
+    match = re.search(r"(\d+(?:[.,]\d+)?)", text)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", "."))
+
+
+def extract_extend_seconds(text, default_sec=30):
+    """Вытаскивает число секунд из просьбы продлить отдых.
+    'продли на 30' -> 30, 'ещё минуту' -> 60, 'ещё 2 минуты' -> 120,
+    просто 'устал' (без числа) -> default_sec (разумный дефолт, не
+    заставляем формулировать точно, когда и так тяжело)."""
+    t = text.strip().lower()
+
+    if "минут" in t:
+        match = re.search(r"(\d+)\s*минут", t)
+        minutes = int(match.group(1)) if match else 1  # "минуту" без цифры -> 1
+        return minutes * 60
+
+    match = re.search(r"(\d+)\s*сек", t)
+    if match:
+        return int(match.group(1))
+
+    # просто число без единиц ("продли на 45") — считаем секундами,
+    # это откликается на короткий отдых 45-90 сек в программе
+    match = re.search(r"(\d+)", t)
+    if match:
+        return int(match.group(1))
+
+    return default_sec
+
+
 def start_session(data, day_id=None):
     """Открывает сессию — запоминает момент старта, дату, день программы
     (по расписанию через program.today_day_id(), если day_id не передан
@@ -51,7 +99,13 @@ def start_session(data, day_id=None):
 
     day_id можно передать явно (например, если сегодня день отдыха по
     расписанию, но Антон всё равно хочет потренироваться на замену) —
-    вызывающий код в bot.py решает, спрашивать ли об этом."""
+    вызывающий код в bot.py решает, спрашивать ли об этом.
+
+    awaiting_weight_input=True сразу после старта (если day_id задан —
+    для дня отдыха без плана вес спрашивать бессмысленно) — bot.py
+    должен сначала спросить вес до тренировки и получить ответ, прежде
+    чем показывать план/вести по упражнениям. Нужен для расчёта тоннажа
+    тела (вес тела учитывается в калориях) и трекинга динамики веса."""
     if data.get("active_session"):
         return False  # уже открыта
     data["active_session"] = {
@@ -61,6 +115,8 @@ def start_session(data, day_id=None):
         "current_exercise_order": 1 if day_id else None,
         "current_set_number": 1 if day_id else None,
         "resting_until": None,
+        "awaiting_weight_input": bool(day_id),
+        "body_weight_kg": None,
     }
     return True
 
@@ -107,6 +163,37 @@ def mark_reminder_sent(data):
     session = data.get("active_session")
     if session:
         session["reminder_sent"] = True
+
+
+def extend_rest(data, extend_sec):
+    """Продлевает текущий отдых на extend_sec. Возвращает новое
+    resting_until (str ISO) или None, если нет активного отдыха
+    (сессия не активна, или ещё ни одного подхода не сделано).
+
+    Продление считается от МАКСИМУМА(текущий resting_until, сейчас) —
+    не просто resting_until + extend_sec. Если Антон пишет 'продли',
+    когда таймер уже истёк (например, напоминание уже пришло, но он
+    ещё не готов), продление от старого resting_until в прошлом дало
+    бы неверный результат — таймер оказался бы уже истёкшим на момент
+    продления. Продлеваем от 'сейчас', если сейчас позже, чем плановое
+    resting_until.
+
+    Также сбрасывает reminder_sent=False — если напоминание уже было
+    отправлено, а Антон просит продлить, значит фактически отдых ещё
+    не закончился для него, и повторное напоминание должно прийти снова
+    после нового (продлённого) resting_until."""
+    session = data.get("active_session")
+    if not session or not session.get("resting_until"):
+        return None
+
+    now = datetime.now(timezone.utc)
+    current_resting_until = datetime.fromisoformat(session["resting_until"])
+    base = max(now, current_resting_until)
+    new_resting_until = base + timedelta(seconds=extend_sec)
+
+    session["resting_until"] = new_resting_until.isoformat()
+    session["reminder_sent"] = False
+    return session["resting_until"]
 
 
 def advance_position(data, weight_kg, reps, rpe=None, note=""):
@@ -191,31 +278,68 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
 
 
 def end_session(data):
-    """Закрывает сессию, возвращает (exercises_today, session_date, day_id)
-    для построения отчёта, либо (None, None, None) если сессия не была
-    открыта — вызывающий код должен явно обработать этот случай.
+    """Закрывает сессию, возвращает dict с данными для построения отчёта,
+    либо None если сессия не была открыта — вызывающий код должен явно
+    обработать этот случай.
 
-    day_id возвращается ОТДЕЛЬНО (не через active_session), потому что
-    active_session обнуляется тут же — build_session_report() без
-    day_id не сможет сравнить план/факт, только тренд по истории."""
+    Возвращает dict (не tuple — сигнатура уже дважды росла при добавлении
+    day_id, потом веса/калорий; словарь не потребует менять вызовы снова
+    при следующем требовании):
+        "exercises": список нормализованных имён упражнений сессии
+        "date": дата сессии (YYYY-MM-DD)
+        "day_id": id дня программы или None
+        "body_weight_kg": вес тела, введённый в начале, или None
+        "duration_minutes": продолжительность тренировки в минутах
+    Все поля возвращаются ОТДЕЛЬНО от active_session, потому что
+    active_session обнуляется тут же."""
     session = data.get("active_session")
     if not session:
-        return None, None, None
+        return None
 
     session_date = session["date"]
-    day_id = session.get("day_id")
     today_sets = [s for s in data.get("sets", []) if s["date"] == session_date]
     exercises_today = sorted({s["exercise"] for s in today_sets})
 
+    duration_minutes = cal.session_duration_minutes(session.get("started_ts"))
+
+    result = {
+        "exercises": exercises_today,
+        "date": session_date,
+        "day_id": session.get("day_id"),
+        "body_weight_kg": session.get("body_weight_kg"),
+        "duration_minutes": duration_minutes,
+    }
+
     data["active_session"] = None
-    return exercises_today, session_date, day_id
+    return result
 
 
 def is_session_active(data):
     return bool(data.get("active_session"))
 
 
-def build_session_report(data, exercises, session_date, day_id=None):
+def is_awaiting_weight_input(data):
+    """True, если сессия открыта и ждёт ответа на вопрос о весе тела до
+    тренировки — весь остальной флоу (план, подходы) должен подождать."""
+    session = data.get("active_session")
+    return bool(session and session.get("awaiting_weight_input"))
+
+
+def set_body_weight(data, weight_kg):
+    """Сохраняет вес тела для этой сессии, снимает флаг ожидания.
+    Возвращает True, если сессия была активна и ждала веса, False если
+    нет активной сессии (вызывающий код не должен был сюда попасть, но
+    функция не падает на некорректном состоянии, просто ничего не делает)."""
+    session = data.get("active_session")
+    if not session:
+        return False
+    session["body_weight_kg"] = weight_kg
+    session["awaiting_weight_input"] = False
+    return True
+
+
+def build_session_report(data, exercises, session_date, day_id=None,
+                          body_weight_kg=None, duration_minutes=None):
     """Строит текст отчёта: по каждому упражнению сессии —
     (1) план/факт: сравнение фактических подходов с планом программы,
         если day_id известен и упражнение реально есть в плане этого
@@ -223,6 +347,10 @@ def build_session_report(data, exercises, session_date, day_id=None):
         по плану текстом отдельно);
     (2) тренд: сравнение с предыдущей тренировкой этого упражнения
         (тоннаж туда-сюда), если такая история есть.
+    В конце — общий тоннаж тренировки (сумма вес×повторы по всем сетам)
+    и оценка калорий (calories.estimate_calories, MET-формула), если
+    body_weight_kg и duration_minutes заданы. Без них — эта секция не
+    показывается, не выдумываем цифры на отсутствующих данных.
 
     day_id=None (например, если тренировка началась в день отдыха без
     явного плана) -> план/факт не показывается, только тренд, как было
@@ -232,6 +360,7 @@ def build_session_report(data, exercises, session_date, day_id=None):
 
     lines = ["\U0001f3c1 <b>Тренировка завершена</b>\n"]
     day_plan = prog.get_day_plan(day_id) if day_id else None
+    total_tonnage = 0.0
 
     for exercise in exercises:
         history = w.get_history_for_exercise(data, exercise, limit_sessions=5)
@@ -239,6 +368,7 @@ def build_session_report(data, exercises, session_date, day_id=None):
         if not today_sessions:
             continue
         today_sets = today_sessions[0]["sets"]
+        total_tonnage += sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in today_sets)
 
         plan_ex = None
         if day_plan:
@@ -257,6 +387,13 @@ def build_session_report(data, exercises, session_date, day_id=None):
             trend = _format_trend(today_sets, prior_sessions[-1]["sets"])
             summary += f"\n  {trend}"
         lines.append(summary)
+
+    totals = [f"\U0001f4ca <b>Итого тоннаж:</b> {round(total_tonnage)} кг"]
+    calories = cal.estimate_calories(body_weight_kg, duration_minutes)
+    if calories is not None:
+        totals.append(f"\U0001f525 <b>Оценка калорий:</b> ~{calories} ккал "
+                       f"(при весе {body_weight_kg} кг, {duration_minutes:.0f} мин)")
+    lines.append("\n".join(totals))
 
     return "\n\n".join(lines)
 

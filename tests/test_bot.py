@@ -17,6 +17,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 sys.path.insert(0, "..")
 import bot
 import program as prog
+import session as sess
 import workouts as w
 
 
@@ -192,23 +193,82 @@ def test_session_start_rest_day_no_program():
     assert "отдых" in result.lower()
 
 
-def test_session_start_training_day_shows_plan_and_first_exercise():
+def test_session_start_training_day_asks_for_weight_first():
     data = w.load_workouts()
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)  # понедельник
         result = bot.handle_session_start(data)
-    assert "День 1" in result
-    assert "Vertical Traction" in result
-    assert "взял" in result
+    # План НЕ показывается сразу — сначала вопрос о весе
+    assert "весишь" in result.lower()
+    assert "День 1" not in result
 
 
-def test_session_start_already_active_reports_current_position():
+def test_session_start_already_active_while_awaiting_weight():
     data = w.load_workouts()
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
-        result = bot.handle_session_start(data)  # повторный "начал"
+        result = bot.handle_session_start(data)  # повторный "начал", вес ещё не дан
+    assert "жду твой вес" in result.lower()
+
+
+def test_session_start_already_active_after_weight_given():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+        bot.handle_weight_answer(data, "121")
+        result = bot.handle_session_start(data)  # повторный "начал", вес уже дан
     assert "уже идёт" in result.lower()
+
+
+# --- handle_weight_answer -------------------------------------------
+
+def test_weight_answer_shows_plan_after_valid_number():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    result = bot.handle_weight_answer(data, "121.5")
+    assert "День 1" in result
+    assert "Vertical Traction" in result
+    assert "взял" in result
+    assert data["active_session"]["body_weight_kg"] == 121.5
+
+
+def test_weight_answer_saves_body_weight():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    assert data["active_session"]["body_weight_kg"] == 121.0
+    assert data["active_session"]["awaiting_weight_input"] is False
+
+
+def test_weight_answer_unparseable_text_asks_again():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    result = bot.handle_weight_answer(data, "не помню сколько")
+    assert "не понял" in result.lower()
+    assert data["active_session"]["body_weight_kg"] is None
+    assert data["active_session"]["awaiting_weight_input"] is True  # флаг не снят
+
+
+def test_main_loop_routes_to_weight_handler_before_other_checks():
+    # Косвенная проверка порядка: пока is_awaiting_weight_input=True,
+    # даже сообщение, похожее на короткую команду ('взял'), должно
+    # обрабатываться как ответ на вопрос о весе, не как подтверждение
+    # подхода — потому что numeric text вроде "121" не совпадает с
+    # SET_DONE_KEYWORDS, но для строгости порядок проверок в main()
+    # ставит is_awaiting_weight_input первым.
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    assert sess.is_awaiting_weight_input(data) is True
 
 
 def test_set_confirmation_without_active_session():
@@ -223,6 +283,7 @@ def test_set_confirmation_records_and_shows_rest_timer():
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
     result = bot.handle_set_confirmation(data)
     combined = "\n".join(result)
     assert "Подход 1/4" in combined
@@ -235,6 +296,7 @@ def test_set_confirmation_transitions_to_next_exercise():
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
     for _ in range(4):  # упражнение 1 = 4 подхода
         result = bot.handle_set_confirmation(data)
     # На 4-м (последнем) подходе exercise_complete=True -> два сообщения:
@@ -251,6 +313,7 @@ def test_set_confirmation_day_complete_message():
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
     total_sets = sum(ex["sets"] for ex in prog.get_day_plan("1")["exercises"])
     for _ in range(total_sets):
         result = bot.handle_set_confirmation(data)
@@ -267,6 +330,7 @@ def test_set_confirmation_exercise_complete_shows_plan_vs_fact():
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
     for _ in range(4):
         result = bot.handle_set_confirmation(data)
     plan_vs_fact = result[0]
@@ -274,3 +338,47 @@ def test_set_confirmation_exercise_complete_shows_plan_vs_fact():
     assert "Подход 1" in plan_vs_fact
     assert "Подход 4" in plan_vs_fact
     assert plan_vs_fact.count("\u2705") == 4  # все 4 подхода по плану
+
+
+# --- handle_extend_rest -------------------------------------------------
+
+def test_handle_extend_rest_without_active_rest():
+    data = w.load_workouts()
+    result = bot.handle_extend_rest(data, "устал")
+    assert "нет активного отдыха" in result.lower()
+
+
+def test_handle_extend_rest_with_explicit_seconds():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_set_confirmation(data)
+    result = bot.handle_extend_rest(data, "продли на 45")
+    assert "45 сек" in result
+    assert "продлён" in result.lower()
+
+
+def test_handle_extend_rest_with_default_when_no_number():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_set_confirmation(data)
+    result = bot.handle_extend_rest(data, "устал")
+    assert "30 сек" in result  # дефолт
+
+
+def test_handle_extend_rest_actually_extends_resting_until():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_set_confirmation(data)
+    before = data["active_session"]["resting_until"]
+    bot.handle_extend_rest(data, "продли на 30")
+    after = data["active_session"]["resting_until"]
+    assert after != before  # реально изменилось, не просто текст ответа

@@ -218,7 +218,9 @@ def handle_workout_message(text, data):
 def handle_session_start(data):
     """Обрабатывает 'начал' — определяет день программы по расписанию
     (program.today_day_id, детерминированно, не DeepSeek), открывает
-    сессию с этим днём, возвращает текст плана + первого упражнения.
+    сессию с этим днём. Сначала спрашивает вес тела (нужен для расчёта
+    массы/тоннажа и калорий за тренировку) — план дня показывается
+    только ПОСЛЕ ответа на этот вопрос, через handle_weight_answer().
 
     Если сегодня день отдыха по расписанию — сессия НЕ открывается с
     day_id (программы нет, current_exercise_order будет None, весь
@@ -231,11 +233,29 @@ def handle_session_start(data):
 
     started = sess.start_session(data, day_id=day_id)
     if not started:
+        if sess.is_awaiting_weight_input(data):
+            return "Жду твой вес до тренировки — напиши число в кг."
         ex, set_num = sess.current_exercise_info(data)
         if ex:
             return f"Тренировка уже идёт. Сейчас: {prog.format_exercise_line(ex)}\nПодход {set_num}/{ex['sets']}."
         return "Тренировка уже идёт — просто пиши подходы."
 
+    return "\U0001f4aa Начинаем! Сколько сейчас весишь (кг)? Нужно для расчёта тоннажа и калорий за тренировку."
+
+
+def handle_weight_answer(data, text):
+    """Обрабатывает ответ на вопрос о весе тела — session.parse_weight_kg
+    вытаскивает число, session.set_body_weight сохраняет и снимает флаг
+    ожидания. После этого показывает план дня + первое упражнение (то,
+    что раньше показывал handle_session_start сразу)."""
+    weight = sess.parse_weight_kg(text)
+    if weight is None:
+        return "Не понял вес — напиши просто число, например 121 или 121.5."
+
+    sess.set_body_weight(data, weight)
+
+    session = data["active_session"]
+    day_id = session["day_id"]
     day_plan = prog.format_day_plan(day_id)
     ex, set_num = sess.current_exercise_info(data)
     first_exercise = prog.format_exercise_line(ex)
@@ -244,6 +264,18 @@ def handle_session_start(data):
         f"\U0001f4aa Начинаем с упражнения 1:\n{first_exercise}\n\n"
         f"Сделай подход {set_num}/{ex['sets']} и напиши «взял»."
     )
+
+
+def handle_extend_rest(data, text):
+    """Обрабатывает просьбу продлить отдых — 'продли на 30', 'устал'.
+    Использует session.extract_extend_seconds для количества (дефолт
+    30 сек, если число не указано явно) и session.extend_rest для
+    самого продления."""
+    extend_sec = sess.extract_extend_seconds(text)
+    new_resting_until = sess.extend_rest(data, extend_sec)
+    if new_resting_until is None:
+        return "Сейчас нет активного отдыха, который можно продлить — начни подход или напиши «взял»."
+    return f"\u23f8 Отдых продлён на {extend_sec} сек. Отдыхай, я напомню."
 
 
 def handle_set_confirmation(data):
@@ -369,16 +401,32 @@ def main():
         if not text or text.startswith("/start"):
             continue
 
+        if sess.is_awaiting_weight_input(data):
+            outgoing.append((handle_weight_answer(data, text), None, None))
+            continue
+
         if sess.is_session_start(text):
             outgoing.append((handle_session_start(data), None, None))
             continue
 
         if sess.is_session_end(text):
-            exercises, session_date, day_id = sess.end_session(data)
-            if exercises is None:
+            session_result = sess.end_session(data)
+            if session_result is None:
                 outgoing.append(("Тренировка не была начата — нечего завершать.", None, None))
             else:
-                outgoing.append((sess.build_session_report(data, exercises, session_date, day_id), None, None))
+                report = sess.build_session_report(
+                    data,
+                    session_result["exercises"],
+                    session_result["date"],
+                    day_id=session_result["day_id"],
+                    body_weight_kg=session_result["body_weight_kg"],
+                    duration_minutes=session_result["duration_minutes"],
+                )
+                outgoing.append((report, None, None))
+            continue
+
+        if sess.is_extend_rest_request(text):
+            outgoing.append((handle_extend_rest(data, text), None, None))
             continue
 
         if sess.is_set_confirmation(text):
