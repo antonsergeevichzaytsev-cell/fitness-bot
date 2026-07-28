@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """Fitness bot — главный обработчик.
 
+Запускается по Telegram webhook через Cloudflare Worker (не по
+расписанию — убрано 28.07.2026, было cron каждые 5 минут, заменено на
+мгновенный отклик и отсутствие лишних прогонов вне тренировки).
+
 Поток:
+0. Session gate (session.py, ДЕТЕРМИНИРОВАННО, не через DeepSeek):
+   "начал"/"погнали" -> открывает сессию. "закончил"/"финиш" -> строит
+   отчёт по всем упражнениям сессии с трендами (тоннаж vs прошлая
+   тренировка) и закрывает сессию. И то и другое — короткий путь,
+   не доходит до парсинга через DeepSeek.
 1. getUpdates (с offset, как filings.py) — забирает и текстовые
    сообщения, и callback_query (нажатия кнопок).
-2. Текстовое сообщение -> parser.parse_workout_text():
+2. Текстовое сообщение (не начало/конец сессии) -> parser.parse_workout_text():
    - uncertain=true -> переспрашиваем конкретным вопросом, НЕ пишем
      в workouts.json (неверная запись веса портит историю прогрессии
      на много тренировок вперёд, дешевле переспросить).
@@ -40,6 +49,7 @@ import net
 import parser
 import progression
 import safety
+import session as sess
 import workouts as w
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -236,6 +246,23 @@ def main():
         msg = u.get("message") or {}
         text = msg.get("text", "")
         if not text or text.startswith("/start"):
+            continue
+
+        if sess.is_session_start(text):
+            started = sess.start_session(data)
+            outgoing.append((
+                "\U0001f4aa Тренировка начата, поехали!" if started
+                else "Тренировка уже идёт — просто пиши подходы.",
+                None, None,
+            ))
+            continue
+
+        if sess.is_session_end(text):
+            exercises, session_date = sess.end_session(data)
+            if exercises is None:
+                outgoing.append(("Тренировка не была начата — нечего завершать.", None, None))
+            else:
+                outgoing.append((sess.build_session_report(data, exercises, session_date), None, None))
             continue
 
         results = handle_workout_message(text, data)

@@ -10,8 +10,11 @@ concurrency:
   queue: max
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
+  # Раньше здесь был cron '*/5 * * * *' (опрос каждые 5 минут). Заменено
+  # 28.07.2026: бот теперь запускается по Telegram webhook через
+  # Cloudflare Worker (см. cloudflare-worker/), не по расписанию —
+  # мгновенный отклик вместо ожидания до 5 минут, и бот не тратит
+  # прогоны CI вне активной тренировки.
   workflow_dispatch: {}
 
 permissions:
