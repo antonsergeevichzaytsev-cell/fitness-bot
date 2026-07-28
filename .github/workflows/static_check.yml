@@ -1,0 +1,50 @@
+name: Static check
+
+# Тот же паттерн, что в metals-news-bot (добавлен туда 27.07.2026 после
+# NameError, который прошёл git push незамеченным и сломал бота на 30+
+# часов). Три слоя: py_compile ловит синтаксис, pyflakes ловит
+# undefined-name (функция вызвана, но не определена — статически, без
+# исполнения этой ветки кода), pytest ловит логическую регрессию в
+# чистых функциях (каденция прогрессии, safety-гейт, парсинг), которую
+# синтаксис-чекеры в принципе не видят.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**.py'
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pyflakes + pytest
+        run: pip install pyflakes pytest
+
+      - name: Syntax check (py_compile)
+        run: |
+          for f in *.py; do
+            python -m py_compile "$f" || exit 1
+          done
+
+      - name: Undefined names / unused imports (pyflakes)
+        run: |
+          OUTPUT=$(python -m pyflakes *.py || true)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -qE "undefined name|is not defined"; then
+            echo "::error::Найдены неопределённые имена — см. вывод выше"
+            exit 1
+          fi
+          echo "Критичных ошибок нет (unused var/import — не блокирует)."
+
+      - name: Unit tests (pytest)
+        run: |
+          cd tests
+          python -m pytest -v
