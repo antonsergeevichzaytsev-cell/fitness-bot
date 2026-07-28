@@ -98,6 +98,40 @@ def get_target(data, exercise):
     return data.get("targets", {}).get(exercise)
 
 
+def format_progress_report(data, exercise, limit_sessions=10):
+    """Строит текстовый отчёт прогресса по exercise за последние
+    limit_sessions тренировок — по каждой сессии: дата, макс. вес,
+    суммарный тоннаж; в конце — изменение тоннажа от первой к последней
+    сессии в процентах (тот же принцип, что session._format_trend, но
+    за весь диапазон, не только последние 2 сессии).
+
+    Возвращает None, если истории по этому упражнению нет вообще —
+    вызывающий код должен явно обработать этот случай (переспросить,
+    может, опечатка в названии), не показывать пустой отчёт."""
+    history = get_history_for_exercise(data, exercise, limit_sessions=limit_sessions)
+    if not history:
+        return None
+
+    lines = [f"\U0001f4c8 <b>Прогресс: {exercise}</b>\n"]
+    for session in history:
+        sets = session["sets"]
+        max_weight = max((s.get("weight_kg") or 0) for s in sets)
+        tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in sets)
+        max_reps = max(s.get("reps", 0) for s in sets)
+        weight_str = f"{max_weight}кг" if max_weight else "б/в"
+        lines.append(f"  {session['date']}: {weight_str} \u00d7 {max_reps} (тоннаж {round(tonnage)} кг)")
+
+    if len(history) >= 2:
+        first_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in history[0]["sets"])
+        last_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in history[-1]["sets"])
+        if first_tonnage > 0:
+            change_pct = round((last_tonnage - first_tonnage) / first_tonnage * 100)
+            sign = "+" if change_pct >= 0 else ""
+            lines.append(f"\nИзменение тоннажа за {len(history)} тренировок: {sign}{change_pct}%")
+
+    return "\n".join(lines)
+
+
 def set_target(data, exercise, weight_kg, reps):
     data.setdefault("targets", {})[exercise] = {
         "weight_kg": weight_kg,
@@ -118,3 +152,28 @@ def add_alias(data, normalized_name, new_alias):
 def known_exercises(data):
     """Список всех нормализованных имён упражнений, встречавшихся хоть раз."""
     return sorted({s["exercise"] for s in data.get("sets", [])})
+
+
+def find_exercise_by_partial_name(data, query):
+    """Ищет упражнение в known_exercises по частичному совпадению текста
+    query (например, 'жим' должно найти 'жим лёжа гантели'). Совпадение
+    в ОБЕ стороны (query в имени ИЛИ имя в query) — на случай, если
+    пользователь написал длиннее или короче реального названия.
+
+    Возвращает нормализованное имя (str) или None, если:
+    - совпадений нет вообще
+    - совпадений НЕСКОЛЬКО и они неоднозначны (не возвращаем наугад
+      первое попавшееся — лучше честно сказать 'уточни', чем показать
+      прогресс не того упражнения)."""
+    q = query.strip().lower()
+    if not q:
+        return None
+
+    matches = [
+        ex for ex in known_exercises(data)
+        if q in ex or ex in q
+    ]
+
+    if len(matches) == 1:
+        return matches[0]
+    return None

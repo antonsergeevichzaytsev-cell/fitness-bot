@@ -24,6 +24,7 @@ EXTEND_REST_KEYWORDS = ["продли", "ещё минут", "ещё секун�
 REPLACE_KEYWORDS = ["замени", "заменить", "занят", "не работает", "сломан", "другое упражнение"]
 SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делать", "скип"]
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
+PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
 
 
 def is_session_start(text):
@@ -114,6 +115,35 @@ def is_undo_request(text):
     """'отмени', 'ошибся' — откатить последнюю записанную запись."""
     t = text.strip().lower()
     return any(kw in t for kw in UNDO_KEYWORDS)
+
+
+def is_progress_request(text):
+    """'покажи прогресс по жиму', 'как дела с приседом' — запрос истории/
+    тренда по конкретному упражнению за несколько тренировок."""
+    t = text.strip().lower()
+    return any(kw in t for kw in PROGRESS_KEYWORDS)
+
+
+def extract_progress_query(text):
+    """Вытаскивает название упражнения из запроса прогресса — то, что
+    осталось после отбрасывания ключевой фразы и висящего предлога
+    ('по', 'с', 'со' — 'покажи прогресс' не включает 'по', остаток
+    'по жиму' иначе оставил бы лишний предлог перед именем).
+    workouts.find_exercise_by_partial_name сам справится с падежным
+    окончанием через substring-матчинг в обе стороны. Пустая строка,
+    если после ключевой фразы ничего не осталось — вызывающий код
+    должен переспросить, какое упражнение."""
+    t = text.strip().lower()
+    for kw in PROGRESS_KEYWORDS:
+        idx = t.find(kw)
+        if idx != -1:
+            rest = t[idx + len(kw):].strip()
+            for prefix in ("по ", "с ", "со "):
+                if rest.startswith(prefix):
+                    rest = rest[len(prefix):].strip()
+                    break
+            return rest
+    return ""
 
 
 def skip_exercise(data):

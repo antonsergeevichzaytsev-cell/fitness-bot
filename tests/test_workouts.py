@@ -189,3 +189,111 @@ def test_known_exercises_lists_unique_sorted():
 def test_known_exercises_empty_for_no_sets():
     data = w.load_workouts()
     assert w.known_exercises(data) == []
+
+
+# --- find_exercise_by_partial_name ---------------------------------------
+
+def test_find_exercise_exact_match():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-20", 50.0, 8, 1)
+    assert w.find_exercise_by_partial_name(data, "присед") == "присед"
+
+
+def test_find_exercise_partial_query_matches_full_name():
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 10, 1)
+    assert w.find_exercise_by_partial_name(data, "жим") == "жим лёжа гантели"
+
+
+def test_find_exercise_longer_query_matches_shorter_name():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-20", 50.0, 8, 1)
+    assert w.find_exercise_by_partial_name(data, "присед со штангой") == "присед"
+
+
+def test_find_exercise_no_match_returns_none():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-20", 50.0, 8, 1)
+    assert w.find_exercise_by_partial_name(data, "совсем другое") is None
+
+
+def test_find_exercise_ambiguous_match_returns_none():
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 10, 1)
+    w.add_set(data, "жим ногами", "2026-07-20", 100.0, 12, 1)
+    assert w.find_exercise_by_partial_name(data, "жим") is None  # неоднозначно
+
+
+def test_find_exercise_more_specific_query_resolves_ambiguity():
+    data = w.load_workouts()
+    w.add_set(data, "жим лёжа гантели", "2026-07-20", 30.0, 10, 1)
+    w.add_set(data, "жим ногами", "2026-07-20", 100.0, 12, 1)
+    assert w.find_exercise_by_partial_name(data, "жим лёжа") == "жим лёжа гантели"
+
+
+def test_find_exercise_empty_query_returns_none():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-20", 50.0, 8, 1)
+    assert w.find_exercise_by_partial_name(data, "") is None
+
+
+def test_find_exercise_no_history_returns_none():
+    data = w.load_workouts()
+    assert w.find_exercise_by_partial_name(data, "присед") is None
+
+
+# --- format_progress_report -----------------------------------------------
+
+def test_format_progress_report_none_without_history():
+    data = w.load_workouts()
+    assert w.format_progress_report(data, "присед") is None
+
+
+def test_format_progress_report_lists_each_session():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)
+    w.add_set(data, "присед", "2026-07-13", 52.5, 8, 1)
+    report = w.format_progress_report(data, "присед")
+    assert "2026-07-06" in report
+    assert "2026-07-13" in report
+    assert "50.0кг" in report
+    assert "52.5кг" in report
+
+
+def test_format_progress_report_shows_tonnage_per_session():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)  # тоннаж 400
+    report = w.format_progress_report(data, "присед")
+    assert "тоннаж 400" in report
+
+
+def test_format_progress_report_shows_overall_change_pct():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)  # тоннаж 400
+    w.add_set(data, "присед", "2026-07-13", 55.0, 8, 1)  # тоннаж 440, +10%
+    report = w.format_progress_report(data, "присед")
+    assert "+10%" in report
+
+
+def test_format_progress_report_negative_change():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-06", 55.0, 8, 1)  # тоннаж 440
+    w.add_set(data, "присед", "2026-07-13", 50.0, 8, 1)  # тоннаж 400, -9%
+    report = w.format_progress_report(data, "присед")
+    assert "-9%" in report
+
+
+def test_format_progress_report_no_change_line_for_single_session():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)
+    report = w.format_progress_report(data, "присед")
+    assert "Изменение тоннажа" not in report  # 1 сессия — не с чем сравнивать
+
+
+def test_format_progress_report_respects_limit_sessions():
+    data = w.load_workouts()
+    for day in range(1, 6):
+        w.add_set(data, "присед", f"2026-07-{day:02d}", 50.0, 8, 1)
+    report = w.format_progress_report(data, "присед", limit_sessions=3)
+    assert "2026-07-01" not in report  # за пределами лимита
+    assert "2026-07-05" in report

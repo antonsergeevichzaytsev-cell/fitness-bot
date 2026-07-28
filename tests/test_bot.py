@@ -640,3 +640,38 @@ def test_callback_sugg_prefix_still_works_alongside_repl():
     result = bot.handle_callback("sugg:confirm:sugg_test", data)
     assert "Принято" in result
     assert w.get_target(data, "присед")["weight_kg"] == 52.5
+
+
+# --- handle_progress_request ----------------------------------------------
+
+def test_handle_progress_empty_query_asks_to_clarify():
+    data = w.load_workouts()
+    result = bot.handle_progress_request(data, "покажи прогресс")
+    assert "уточни" in result.lower()
+
+
+def test_handle_progress_no_history_at_all():
+    data = w.load_workouts()
+    data["sets"] = []
+    result = bot.handle_progress_request(data, "прогресс по жиму")
+    assert "нет истории" in result.lower()
+
+
+def test_handle_progress_shows_report_for_found_exercise():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)
+    w.add_set(data, "присед", "2026-07-13", 52.5, 8, 1)
+    result = bot.handle_progress_request(data, "покажи прогресс по приседу")
+    assert "Прогресс: присед" in result
+    assert "2026-07-06" in result
+    assert "2026-07-13" in result
+
+
+def test_handle_progress_unmatched_query_suggests_known_exercises():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "присед", "2026-07-06", 50.0, 8, 1)
+    result = bot.handle_progress_request(data, "прогресс по бегу")
+    assert "не нашёл" in result.lower()
+    assert "присед" in result

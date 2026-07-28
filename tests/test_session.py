@@ -619,6 +619,39 @@ def test_is_undo_request_false_for_workout_log():
     assert sess.is_undo_request("присед 50 на 8") is False
 
 
+# --- is_progress_request / extract_progress_query ------------------------
+
+def test_is_progress_request_matches_keywords():
+    for text in ["покажи прогресс по жиму", "прогресс по приседу",
+                 "как дела с жимом лёжа", "статистика по приседу"]:
+        assert sess.is_progress_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_progress_request_false_for_workout_log():
+    assert sess.is_progress_request("присед 50 на 8") is False
+
+
+def test_extract_progress_query_strips_keyword_and_preposition():
+    assert sess.extract_progress_query("покажи прогресс по жиму") == "жиму"
+    assert sess.extract_progress_query("прогресс по приседу") == "приседу"
+
+
+def test_extract_progress_query_with_preposition_c():
+    assert sess.extract_progress_query("как дела с жимом лёжа") == "жимом лёжа"
+
+
+def test_extract_progress_query_with_preposition_co():
+    assert sess.extract_progress_query("покажи прогресс со штангой") == "штангой"
+
+
+def test_extract_progress_query_empty_when_nothing_after_keyword():
+    assert sess.extract_progress_query("покажи прогресс") == ""
+
+
+def test_extract_progress_query_no_keyword_returns_empty():
+    assert sess.extract_progress_query("присед 50 на 8") == ""
+
+
 # --- skip_exercise -----------------------------------------------------
 
 def test_skip_exercise_no_active_session_returns_none():

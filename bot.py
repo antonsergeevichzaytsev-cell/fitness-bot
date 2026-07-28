@@ -354,6 +354,30 @@ def handle_undo(data):
     return f"Отменил: {undone['exercise']} — {weight_str} \u00d7 {undone['reps']} (подход {undone['set_number']})."
 
 
+def handle_progress_request(data, text):
+    """Обрабатывает 'покажи прогресс по X' — извлекает название через
+    session.extract_progress_query, находит упражнение через
+    workouts.find_exercise_by_partial_name (детерминированный substring-
+    матчинг, не DeepSeek — простое сопоставление имени не требует LLM),
+    строит отчёт через workouts.format_progress_report."""
+    query = sess.extract_progress_query(text)
+    if not query:
+        return "Уточни, по какому упражнению показать прогресс — например «прогресс по жиму»."
+
+    exercise = w.find_exercise_by_partial_name(data, query)
+    if exercise is None:
+        known = w.known_exercises(data)
+        if not known:
+            return "У тебя ещё нет истории тренировок — не с чем сравнивать прогресс."
+        return (
+            f"Не нашёл упражнение «{query}» однозначно, или таких несколько. "
+            f"Есть в истории: {', '.join(known[:10])}."
+        )
+
+    report = w.format_progress_report(data, exercise)
+    return report or f"Нет истории по «{exercise}»."
+
+
 def handle_extend_rest(data, text):
     """Обрабатывает просьбу продлить отдых — 'продли на 30', 'устал'.
     Использует session.extract_extend_seconds для количества (дефолт
@@ -529,6 +553,10 @@ def main():
 
         if sess.is_awaiting_weight_input(data):
             outgoing.append((handle_weight_answer(data, text), None, None))
+            continue
+
+        if sess.is_progress_request(text):
+            outgoing.append((handle_progress_request(data, text), None, None))
             continue
 
         if sess.is_session_start(text):
