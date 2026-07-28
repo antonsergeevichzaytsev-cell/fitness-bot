@@ -306,3 +306,128 @@ def test_format_cooldown_different_per_day():
 
 def test_format_cooldown_none_for_unknown_day():
     assert p.format_cooldown("99") is None
+
+
+# --- get_phase_info / apply_phase_modifier -------------------------------
+
+def test_get_phase_info_returns_known_phases():
+    for phase_id in ["strength", "volume", "deficit"]:
+        phase = p.get_phase_info(phase_id)
+        assert phase is not None
+        assert "reps_multiplier" in phase
+
+
+def test_get_phase_info_unknown_returns_none():
+    assert p.get_phase_info("unknown_phase") is None
+
+
+def test_apply_phase_modifier_volume_no_change():
+    ex = p.get_exercise("1", 1)
+    result = p.apply_phase_modifier(ex, "volume")
+    assert result["reps_min"] == ex["reps_min"]
+    assert result["reps_max"] == ex["reps_max"]
+    assert result["weight_min_kg"] == ex["weight_min_kg"]
+    assert result["rest_sec"] == ex["rest_sec"]
+
+
+def test_apply_phase_modifier_strength_lowers_reps_raises_weight():
+    ex = p.get_exercise("1", 1)  # 8-10 reps, 45-50кг
+    result = p.apply_phase_modifier(ex, "strength")
+    assert result["reps_min"] < ex["reps_min"]
+    assert result["reps_max"] < ex["reps_max"]
+    assert result["weight_min_kg"] > ex["weight_min_kg"]
+    assert result["weight_max_kg"] > ex["weight_max_kg"]
+
+
+def test_apply_phase_modifier_deficit_raises_reps_lowers_weight_and_rest():
+    ex = p.get_exercise("1", 1)
+    result = p.apply_phase_modifier(ex, "deficit")
+    assert result["reps_min"] > ex["reps_min"]
+    assert result["reps_max"] > ex["reps_max"]
+    assert result["weight_min_kg"] < ex["weight_min_kg"]
+    assert result["weight_max_kg"] < ex["weight_max_kg"]
+    assert result["rest_sec"] < ex["rest_sec"]
+
+
+def test_apply_phase_modifier_unknown_phase_no_change():
+    ex = p.get_exercise("1", 1)
+    result = p.apply_phase_modifier(ex, "unknown_phase")
+    assert result["reps_min"] == ex["reps_min"]
+    assert result["weight_min_kg"] == ex["weight_min_kg"]
+
+
+def test_apply_phase_modifier_does_not_mutate_original():
+    ex = p.get_exercise("1", 1)
+    before = dict(ex)
+    p.apply_phase_modifier(ex, "strength")
+    after = p.get_exercise("1", 1)
+    assert before == after
+
+
+def test_apply_phase_modifier_none_weight_stays_none():
+    ex = p.get_exercise("2", 2)  # Hammer Iso-Lateral, по ощущению
+    result = p.apply_phase_modifier(ex, "strength")
+    assert result["weight_min_kg"] is None
+    assert result["weight_max_kg"] is None
+
+
+def test_apply_phase_modifier_weight_rounds_to_half_kg():
+    ex = p.get_exercise("1", 1)  # 45-50кг
+    result = p.apply_phase_modifier(ex, "strength")  # x1.1
+    # 45*1.1=49.5, 50*1.1=55.0 — оба уже кратны 0.5
+    assert result["weight_min_kg"] % 0.5 == 0
+    assert result["weight_max_kg"] % 0.5 == 0
+
+
+def test_apply_phase_modifier_reps_never_below_one():
+    # Экстремальный тест: если бы множитель был очень маленьким,
+    # повторы не должны уйти в 0 или отрицательные
+    ex = {"reps_min": 8, "reps_max": 10, "weight_min_kg": 45, "weight_max_kg": 50, "rest_sec": 90}
+    fake_program = {"phases": {"extreme": {
+        "reps_multiplier": 0.01, "weight_multiplier": 1.0, "rest_multiplier": 1.0
+    }}}
+    result = p.apply_phase_modifier(ex, "extreme", fake_program)
+    assert result["reps_min"] >= 1
+    assert result["reps_max"] >= result["reps_min"]
+
+
+# --- format_day_plan_with_targets: интеграция с фазой периодизации -------
+
+def test_format_day_plan_with_targets_applies_strength_phase():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-28")
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "45-50кг" not in plan  # старый диапазон не должен остаться
+    assert "6-7" in plan  # модифицированные повторы
+
+
+def test_format_day_plan_with_targets_applies_deficit_phase():
+    data = w.load_workouts()
+    w.set_active_phase(data, "deficit", "2026-07-28")
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "45-50кг" not in plan
+
+
+def test_format_day_plan_with_targets_volume_phase_shows_static():
+    data = w.load_workouts()
+    # active_phase по умолчанию 'volume'
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "45-50кг" in plan
+
+
+def test_format_day_plan_with_targets_target_beats_phase_in_display():
+    # КРИТИЧНО: тот же приоритет, что в session.current_exercise_info,
+    # должен соблюдаться и в отображении плана, не только в логике флоу
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-28")
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    plan = p.format_day_plan_with_targets("1", data)
+    # Изолируем строку именно Vertical Traction — 49.5 (=45x1.1) может
+    # легитимно встретиться в фазово-модифицированном весе ДРУГОГО
+    # упражнения дня, проверка по всему тексту была бы ложноположительной
+    vt_line_start = plan.find("Vertical Traction")
+    vt_line_end = plan.find("\n\n", vt_line_start)
+    vt_section = plan[vt_line_start:vt_line_end]
+    assert "52.5кг" in vt_section  # точный target, не модифицированный фазой
+    assert "8-10" in vt_section  # повторы тоже НЕ модифицированы (target не трогает reps плана — они из ex)

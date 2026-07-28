@@ -14,7 +14,8 @@ def test_load_workouts_missing_file_returns_empty_schema(tmp_path, monkeypatch):
     monkeypatch.setattr(w, "WORKOUTS_PATH", str(fake_path))
     data = w.load_workouts()
     assert data == {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                     "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {}}
+                     "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
+                     "active_phase": {"phase_id": "volume", "started_date": None}}
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -372,3 +373,29 @@ def test_load_workouts_missing_cardio_log_key_does_not_crash():
             "pending_suggestions": [], "targets": {}, "wellness_log": {}}
     data.setdefault("cardio_log", {})
     assert w.get_cardio_for_date(data, "2026-07-28") == {"entries": [], "total_km": 0}
+
+
+# --- get_active_phase / set_active_phase -----------------------------
+
+def test_get_active_phase_defaults_to_volume():
+    data = w.load_workouts()
+    phase = w.get_active_phase(data)
+    assert phase["phase_id"] == "volume"
+    assert phase["started_date"] is None
+
+
+def test_set_active_phase_updates_state():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-28")
+    phase = w.get_active_phase(data)
+    assert phase["phase_id"] == "strength"
+    assert phase["started_date"] == "2026-07-28"
+
+
+def test_set_active_phase_overwrites_previous():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    w.set_active_phase(data, "deficit", "2026-07-28")
+    phase = w.get_active_phase(data)
+    assert phase["phase_id"] == "deficit"
+    assert phase["started_date"] == "2026-07-28"

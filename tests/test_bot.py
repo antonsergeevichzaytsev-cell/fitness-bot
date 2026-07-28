@@ -863,3 +863,46 @@ def test_handle_cardio_no_number_asks_to_clarify():
     data = w.load_workouts()
     result = bot.handle_cardio(data, "кардио")
     assert "не понял" in result.lower()
+
+
+# --- handle_phase_change ------------------------------------------------
+
+def test_handle_phase_change_switches_to_strength():
+    data = w.load_workouts()
+    result = bot.handle_phase_change(data, "фаза силовой")
+    assert "Силовой" in result
+    assert data["active_phase"]["phase_id"] == "strength"
+
+
+def test_handle_phase_change_switches_to_deficit_without_keyword():
+    data = w.load_workouts()
+    result = bot.handle_phase_change(data, "переключи на дефицит")
+    assert "Дефицитный" in result
+    assert data["active_phase"]["phase_id"] == "deficit"
+
+
+def test_handle_phase_change_unknown_phase_asks_to_clarify():
+    data = w.load_workouts()
+    result = bot.handle_phase_change(data, "фаза что-то непонятное")
+    assert "не понял" in result.lower()
+
+
+def test_handle_phase_change_records_started_date():
+    data = w.load_workouts()
+    bot.handle_phase_change(data, "фаза силовой")
+    assert data["active_phase"]["started_date"] is not None
+
+
+def test_phase_change_affects_next_session_plan_display():
+    # Регрессия на найденный баг: смена фазы должна отразиться в
+    # РЕАЛЬНО ПОКАЗЫВАЕМОМ плане, не только во внутреннем состоянии
+    data = w.load_workouts()
+    data["sets"] = []
+    bot.handle_phase_change(data, "фаза силовой")
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    result = bot.handle_wellness_answer(data, "нормально")
+    combined = "\n".join(result)
+    assert "45-50кг" not in combined  # старый немодифицированный диапазон отсутствует

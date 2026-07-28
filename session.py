@@ -26,6 +26,10 @@ SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делат
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
 CARDIO_KEYWORD = "кардио"
+PHASE_KEYWORD = "фаза"
+PHASE_NAME_TO_ID = {"силовой": "strength", "силовая": "strength",
+                     "объёмный": "volume", "объемный": "volume", "объёмная": "volume", "объемная": "volume",
+                     "дефицитный": "deficit", "дефицитная": "deficit", "дефицит": "deficit"}
 
 
 def is_session_start(text):
@@ -146,6 +150,28 @@ def extract_cardio_km(text):
     if not match:
         return None
     return float(match.group(1).replace(",", "."))
+
+
+def is_phase_change_request(text):
+    """'фаза силовой', 'переключи на дефицит' — просьба сменить блок
+    периодизации. Детерминированное распознавание по ключевому слову
+    'фаза' ИЛИ по одному из названий фаз (PHASE_NAME_TO_ID) — 'дефицит'
+    само по себе тоже валидная команда, не только 'фаза дефицит'."""
+    t = text.strip().lower()
+    if PHASE_KEYWORD in t:
+        return True
+    return any(name in t for name in PHASE_NAME_TO_ID)
+
+
+def extract_phase_id(text):
+    """Извлекает id фазы ('strength'/'volume'/'deficit') из текста
+    команды смены фазы. Возвращает None, если ни одно известное
+    название фазы не найдено в тексте."""
+    t = text.strip().lower()
+    for name, phase_id in PHASE_NAME_TO_ID.items():
+        if name in t:
+            return phase_id
+    return None
 
 
 def extract_progress_query(text):
@@ -334,12 +360,17 @@ def current_exercise_info(data):
        ручная, явная замена на другой тренажёр/упражнение целиком.
     2. targets из workouts.json (подтверждённая прогрессия через
        progression.py + confirm-кнопку) — вес/повторы того же
-       упражнения подняты, само упражнение не меняется.
-    3. Статичный план из training_program.json — как задумано изначально.
+       упражнения подняты, само упражнение не меняется. Target — явно
+       подтверждённое конкретное число, фазовый модификатор поверх
+       него НЕ применяется (было бы двойной модификацией одного и
+       того же намерения).
+    3. Фаза периодизации (active_phase в workouts.json) — модифицирует
+       СТАТИЧНЫЙ план (не target), если активная фаза не 'volume'.
+    4. Статичный план из training_program.json — как задумано изначально.
 
     Замена действует ТОЛЬКО для этой сессии. Target — до следующего
     подтверждения (перезаписывается новым confirm, не откатывается
-    автоматически)."""
+    автоматически). Фаза — до явной смены через set_active_phase."""
     session = data.get("active_session")
     if not session or not session.get("day_id"):
         return None, None
@@ -361,6 +392,9 @@ def current_exercise_info(data):
         ex = dict(ex)  # копия, не мутируем training_program.json в памяти
         ex["weight_min_kg"] = target["weight_kg"]
         ex["weight_max_kg"] = target["weight_kg"]
+    else:
+        active_phase = w.get_active_phase(data)
+        ex = prog.apply_phase_modifier(ex, active_phase["phase_id"])
     return ex, session.get("current_set_number", 1)
 
 

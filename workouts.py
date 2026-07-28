@@ -15,11 +15,13 @@ WORKOUTS_PATH = os.path.join(ROOT, "workouts.json")
 def load_workouts():
     if not os.path.exists(WORKOUTS_PATH):
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {}}
+                "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
+                "active_phase": {"phase_id": "volume", "started_date": None}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
         data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
         data.setdefault("cardio_log", {})
+        data.setdefault("active_phase", {"phase_id": "volume", "started_date": None})
         return data
 
 
@@ -144,6 +146,21 @@ def get_cardio_for_date(data, date):
     entries = data.get("cardio_log", {}).get(date, [])
     total_km = sum(e["km"] for e in entries)
     return {"entries": entries, "total_km": round(total_km, 1)}
+
+
+def get_active_phase(data):
+    """Возвращает {"phase_id": ..., "started_date": ...} — текущий блок
+    периодизации. По умолчанию 'volume' (базовый план программы, без
+    модификаторов) с started_date=None, если фаза никогда не менялась
+    явно."""
+    return data.get("active_phase", {"phase_id": "volume", "started_date": None})
+
+
+def set_active_phase(data, phase_id, started_date):
+    """Устанавливает активный блок периодизации ('strength'/'volume'/
+    'deficit') с датой начала — нужна для отсчёта 4-8 недель на
+    напоминание сменить блок."""
+    data["active_phase"] = {"phase_id": phase_id, "started_date": started_date}
 
 
 def format_progress_report(data, exercise, limit_sessions=10):

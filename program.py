@@ -91,15 +91,23 @@ def format_day_plan(day_id, program=None):
 
 
 def format_day_plan_with_targets(day_id, workouts_data, program=None):
-    """То же, что format_day_plan, но применяет подтверждённые targets
-    прогрессии (workouts.get_target) к каждому упражнению перед
-    отображением — иначе план в начале тренировки показывал бы старый
-    вес даже после того, как Антон подтвердил прогрессию на прошлой
-    сессии (найдено 28.07.2026: target сохранялся, но никогда не
-    отображался и не применялся при показе плана дня)."""
+    """То же, что format_day_plan, но применяет модификации плана перед
+    отображением — иначе план в начале тренировки показывал бы старые
+    статичные числа, даже если что-то изменилось. Приоритет (тот же,
+    что в session.current_exercise_info):
+    1. Подтверждённый target прогрессии (workouts.get_target) —
+       конкретное подтверждённое число, не модифицируется фазой.
+    2. Активная фаза периодизации (workouts.get_active_phase), если
+       она не 'volume' — модифицирует статичный план.
+    3. Статичный план без изменений.
+
+    Найдено 28.07.2026 (дважды за один день — сначала для targets,
+    потом для фазы периодизации): 'сохранить состояние' и 'применить
+    состояние к отображению' — два разных шага, легко забыть второй."""
     day = get_day_plan(day_id, program)
     if not day:
         return None
+    active_phase = w.get_active_phase(workouts_data)
     lines = [f"<b>День {day_id} — {day['name']}</b>\n"]
     for ex in day["exercises"]:
         normalized = w.normalize_exercise_name(ex["name"], workouts_data.get("exercise_aliases", {}))
@@ -108,8 +116,51 @@ def format_day_plan_with_targets(day_id, workouts_data, program=None):
             ex = dict(ex)
             ex["weight_min_kg"] = target["weight_kg"]
             ex["weight_max_kg"] = target["weight_kg"]
+        else:
+            ex = apply_phase_modifier(ex, active_phase["phase_id"], program)
         lines.append(format_exercise_line(ex))
     return "\n\n".join(lines)
+
+
+def get_phase_info(phase_id, program=None):
+    """Возвращает dict фазы периодизации (name/reps_multiplier/
+    weight_multiplier/rest_multiplier/description) или None, если
+    phase_id не существует в программе."""
+    if program is None:
+        program = load_program()
+    return program.get("phases", {}).get(phase_id)
+
+
+def apply_phase_modifier(ex, phase_id, program=None):
+    """Возвращает КОПИЮ упражнения с применёнными модификаторами
+    периодизации (reps_min/max, weight_min/max, rest_sec умножены на
+    коэффициенты фазы). phase_id='volume' (базовый блок) или неизвестная
+    фаза -> возвращает ex БЕЗ изменений (копию, не тот же объект — не
+    мутируем оригинал из training_program.json).
+
+    Округление: reps до целого (нельзя сделать 8.4 повтора), weight до
+    0.5кг (типичный шаг блинов/гантелей), rest_sec до целых секунд.
+    Вес None ('по ощущению' в плане) не трогаем — умножать нечего."""
+    phase = get_phase_info(phase_id, program)
+    result = dict(ex)
+    if phase is None or phase_id == "volume":
+        return result
+
+    reps_mult = phase["reps_multiplier"]
+    weight_mult = phase["weight_multiplier"]
+    rest_mult = phase["rest_multiplier"]
+
+    result["reps_min"] = max(1, round(ex["reps_min"] * reps_mult))
+    result["reps_max"] = max(result["reps_min"], round(ex["reps_max"] * reps_mult))
+
+    if ex["weight_min_kg"] is not None:
+        result["weight_min_kg"] = round(ex["weight_min_kg"] * weight_mult * 2) / 2  # шаг 0.5кг
+    if ex["weight_max_kg"] is not None:
+        result["weight_max_kg"] = round(ex["weight_max_kg"] * weight_mult * 2) / 2
+
+    result["rest_sec"] = max(15, round(ex["rest_sec"] * rest_mult))
+
+    return result
 
 
 def format_warmup(program=None):

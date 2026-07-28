@@ -403,6 +403,21 @@ def handle_cardio(data, text):
     return f"\U0001f6b4 Записал кардио: {km}км. Сегодня всего: {total['total_km']}км."
 
 
+def handle_phase_change(data, text):
+    """Обрабатывает 'фаза силовой'/'переключи на дефицит' — смена блока
+    периодизации. Работает в любой момент, не привязана к активной
+    тренировке (фаза влияет на СЛЕДУЮЩИЕ тренировки через
+    current_exercise_info, не на что-то уже идущее прямо сейчас)."""
+    phase_id = sess.extract_phase_id(text)
+    if phase_id is None:
+        return "Не понял фазу — напиши «фаза силовой», «фаза объёмный» или «фаза дефицитный»."
+
+    phase_info = prog.get_phase_info(phase_id)
+    today = datetime.now(timezone.utc).date().isoformat()
+    w.set_active_phase(data, phase_id, today)
+    return f"\U0001f504 Фаза переключена на «{phase_info['name']}»: {phase_info['description']}."
+
+
 def handle_progress_request(data, text):
     """Обрабатывает 'покажи прогресс по X' — извлекает название через
     session.extract_progress_query, находит упражнение через
@@ -654,6 +669,10 @@ def main():
 
         if sess.is_cardio_message(text):
             outgoing.append((handle_cardio(data, text), None, None))
+            continue
+
+        if sess.is_phase_change_request(text):
+            outgoing.append((handle_phase_change(data, text), None, None))
             continue
 
         if sess.is_extend_rest_request(text):

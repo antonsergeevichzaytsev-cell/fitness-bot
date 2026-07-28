@@ -1011,3 +1011,93 @@ def test_report_no_cardio_section_when_not_logged():
     w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
     report = sess.build_session_report(data, ["присед"], "2026-07-28")
     assert "Кардио" not in report
+
+
+# --- current_exercise_info: применение фазы периодизации -----------------
+
+def test_current_exercise_info_applies_strength_phase():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    w.set_active_phase(data, "strength", "2026-07-28")
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["reps_min"] < 8  # снижено от оригинальных 8-10
+    assert ex["weight_min_kg"] > 45  # поднято от оригинальных 45-50
+
+
+def test_current_exercise_info_applies_deficit_phase():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    w.set_active_phase(data, "deficit", "2026-07-28")
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["reps_min"] > 8
+    assert ex["weight_min_kg"] < 45
+    assert ex["rest_sec"] < 90
+
+
+def test_current_exercise_info_volume_phase_no_change():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    # active_phase по умолчанию 'volume'
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["reps_min"] == 8
+    assert ex["weight_min_kg"] == 45
+
+
+def test_current_exercise_info_target_beats_phase():
+    # Target (подтверждённая прогрессия) — приоритетнее фазы, фаза НЕ
+    # применяется поверх target (двойная модификация одного намерения)
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    w.set_active_phase(data, "strength", "2026-07-28")
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["weight_min_kg"] == 52.5  # ровно target, не модифицировано фазой
+    assert ex["weight_max_kg"] == 52.5
+
+
+def test_current_exercise_info_replacement_beats_phase():
+    # Замена упражнения — тоже приоритетнее фазы (та же логика, что
+    # приоритет над target)
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    w.set_active_phase(data, "strength", "2026-07-28")
+    replacement = {
+        "name": "Cable Row замена", "machine": "Кроссовер", "sets": 4,
+        "reps_min": 8, "reps_max": 10, "weight_min_kg": 40, "weight_max_kg": 45,
+        "tempo": "2-1-2-0", "rest_sec": 90, "order": 1, "per_side": False,
+    }
+    sess.apply_replacement(data, 1, replacement)
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Cable Row замена"
+    assert ex["reps_min"] == 8  # замена, не модифицированная фазой
+
+
+# --- is_phase_change_request / extract_phase_id ---------------------
+
+def test_is_phase_change_request_with_keyword():
+    assert sess.is_phase_change_request("фаза силовой") is True
+
+
+def test_is_phase_change_request_without_keyword_but_phase_name():
+    assert sess.is_phase_change_request("переключи на дефицит") is True
+
+
+def test_is_phase_change_request_false_for_unrelated():
+    assert sess.is_phase_change_request("взял") is False
+
+
+def test_extract_phase_id_strength():
+    assert sess.extract_phase_id("фаза силовой") == "strength"
+
+
+def test_extract_phase_id_deficit():
+    assert sess.extract_phase_id("переключи на дефицит") == "deficit"
+
+
+def test_extract_phase_id_volume():
+    assert sess.extract_phase_id("фаза объёмный") == "volume"
+
+
+def test_extract_phase_id_unknown_returns_none():
+    assert sess.extract_phase_id("фаза что-то непонятное") is None

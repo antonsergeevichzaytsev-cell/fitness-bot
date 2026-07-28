@@ -498,5 +498,28 @@
         "description": "Перед первым упражнением: 1-2 подхода с 40-50% рабочего веса x 12-15 повторений"
       }
     ]
+  },
+  "phases": {
+    "strength": {
+      "name": "Силовой",
+      "reps_multiplier": 0.7,
+      "weight_multiplier": 1.1,
+      "rest_multiplier": 1.0,
+      "description": "Низкие повторы, высокий вес — фокус на силу"
+    },
+    "volume": {
+      "name": "Объёмный",
+      "reps_multiplier": 1.0,
+      "weight_multiplier": 1.0,
+      "rest_multiplier": 1.0,
+      "description": "Базовый план программы, без модификаций"
+    },
+    "deficit": {
+      "name": "Дефицитный",
+      "reps_multiplier": 1.3,
+      "weight_multiplier": 0.85,
+      "rest_multiplier": 0.75,
+      "description": "Высокие повторы, меньше отдыха, ниже вес — жиросжигание"
+    }
   }
 }
