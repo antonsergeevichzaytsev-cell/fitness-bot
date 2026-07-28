@@ -2,6 +2,7 @@
 жизненный цикл сессии, построение отчёта с трендами.
 """
 import sys
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, "..")
 import program as prog
@@ -268,4 +269,62 @@ def test_advance_position_passes_rpe_and_note_through():
     sess.advance_position(data, weight_kg=47.5, reps=10, rpe=8, note="тяжело")
     assert data["sets"][0]["rpe"] == 8
     assert data["sets"][0]["note"] == "тяжело"
+
+
+# --- rest_timer_expired / mark_reminder_sent -----------------------------
+# Проверяется Cron Trigger'ом раз в минуту (timer.py) — критично: не
+# должен слать напоминание повторно, должен корректно сбрасываться на
+# новый подход.
+
+def test_rest_timer_not_expired_before_rest_sec():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")  # упражнение 1: rest_sec=90
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    soon = datetime.now(timezone.utc) + timedelta(seconds=30)
+    assert sess.rest_timer_expired(data, now=soon) is False
+
+
+def test_rest_timer_expired_after_rest_sec():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    later = datetime.now(timezone.utc) + timedelta(seconds=100)
+    assert sess.rest_timer_expired(data, now=later) is True
+
+
+def test_rest_timer_no_active_session():
+    data = w.load_workouts()
+    assert sess.rest_timer_expired(data) is False
+
+
+def test_rest_timer_no_resting_until_set():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")  # начал, но ещё ни одного подхода
+    assert sess.rest_timer_expired(data) is False
+
+
+def test_mark_reminder_sent_prevents_repeat():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    later = datetime.now(timezone.utc) + timedelta(seconds=100)
+    assert sess.rest_timer_expired(data, now=later) is True
+    sess.mark_reminder_sent(data)
+    assert sess.rest_timer_expired(data, now=later) is False
+
+
+def test_new_set_resets_reminder_sent_flag():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    sess.mark_reminder_sent(data)
+    assert data["active_session"]["reminder_sent"] is True
+    sess.advance_position(data, weight_kg=47.5, reps=10)  # новый подход
+    assert data["active_session"]["reminder_sent"] is False
+
+
+def test_mark_reminder_sent_no_active_session_does_not_crash():
+    data = w.load_workouts()
+    sess.mark_reminder_sent(data)  # не должно упасть без активной сессии
+
 

@@ -10,7 +10,7 @@ Session state хранится в workouts.json (data['active_session']) — н�
 отдельным файлом, чтобы не рассинхронизировать с основным состоянием
 при параллельных прогонах.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import program as prog
 import workouts as w
@@ -81,6 +81,34 @@ def current_exercise_info(data):
     return ex, session.get("current_set_number", 1)
 
 
+def rest_timer_expired(data, now=None):
+    """True, если активная сессия ждёт следующего подхода, отдых уже
+    истёк (resting_until в прошлом), и напоминание об этом ЕЩЁ НЕ
+    отправлено (reminder_sent=False). Используется Cron Trigger'ом
+    (см. cloudflare-worker/ + timer.py) — вызывается раз в минуту,
+    должен быть дешёвым и не иметь побочных эффектов сам по себе
+    (пометка reminder_sent=True — отдельный шаг, mark_reminder_sent,
+    вызывающий код должен явно его выполнить после реальной отправки)."""
+    session = data.get("active_session")
+    if not session or not session.get("resting_until"):
+        return False
+    if session.get("reminder_sent"):
+        return False
+    if now is None:
+        now = datetime.now(timezone.utc)
+    resting_until = datetime.fromisoformat(session["resting_until"])
+    return now >= resting_until
+
+
+def mark_reminder_sent(data):
+    """Помечает, что напоминание об истёкшем отдыхе отправлено — не
+    даёт Cron Trigger'у слать его повторно на следующих прогонах, пока
+    не начнётся новый отдых (advance_position сбрасывает флаг заново)."""
+    session = data.get("active_session")
+    if session:
+        session["reminder_sent"] = True
+
+
 def advance_position(data, weight_kg, reps, rpe=None, note=""):
     """Записывает выполненный сет текущего упражнения через
     workouts.add_set, продвигает позицию сессии на следующий подход
@@ -113,6 +141,14 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
               set_number, rpe=rpe, note=note)
 
     rest_sec = ex["rest_sec"]
+
+    # Таймер отдыха: Cron Trigger (см. cloudflare-worker/, каждую минуту)
+    # сравнивает resting_until с текущим временем и шлёт напоминание,
+    # если время истекло и напоминание ещё не отправлено. reminder_sent
+    # сбрасывается в False на каждый новый подход — без этого напоминание
+    # ушло бы повторно на следующей минуте после того, как уже сработало.
+    session["resting_until"] = (datetime.now(timezone.utc) + timedelta(seconds=rest_sec)).isoformat()
+    session["reminder_sent"] = False
 
     if set_number < ex["sets"]:
         # ещё есть подходы в этом же упражнении
