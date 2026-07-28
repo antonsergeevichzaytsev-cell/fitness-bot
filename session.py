@@ -293,6 +293,9 @@ def start_session(data, day_id=None):
         "resting_until": None,
         "awaiting_weight_input": bool(day_id),
         "body_weight_kg": None,
+        "awaiting_wellness_input": False,  # выставляется True после ответа на вес, см. set_body_weight
+        "sleep_hours": None,
+        "stress_level": None,
     }
     return True
 
@@ -490,6 +493,9 @@ def end_session(data):
         "day_id": id дня программы или None
         "body_weight_kg": вес тела, введённый в начале, или None
         "duration_minutes": продолжительность тренировки в минутах
+        "sleep_hours": часы сна из дневника самочувствия, или None
+        "stress_level": уровень стресса 1-10, или None
+        "wellness_note": свободный текст ответа на вопрос о самочувствии
     Все поля возвращаются ОТДЕЛЬНО от active_session, потому что
     active_session обнуляется тут же."""
     session = data.get("active_session")
@@ -508,6 +514,9 @@ def end_session(data):
         "day_id": session.get("day_id"),
         "body_weight_kg": session.get("body_weight_kg"),
         "duration_minutes": duration_minutes,
+        "sleep_hours": session.get("sleep_hours"),
+        "stress_level": session.get("stress_level"),
+        "wellness_note": session.get("wellness_note", ""),
     }
 
     data["active_session"] = None
@@ -525,22 +534,79 @@ def is_awaiting_weight_input(data):
     return bool(session and session.get("awaiting_weight_input"))
 
 
+def is_awaiting_wellness_input(data):
+    """True, если сессия ждёт ответа на вопрос о сне/стрессе — второй
+    предтренировочный вопрос, после веса, до показа плана."""
+    session = data.get("active_session")
+    return bool(session and session.get("awaiting_wellness_input"))
+
+
+def parse_wellness_answer(text):
+    """Парсит ответ на вопрос о сне/стрессе — гибкий формат, не строгая
+    схема. Понимает:
+    - 'спал 7, стресс 4' -> sleep_hours=7.0, stress_level=4
+    - 'сон 6 часов' -> sleep_hours=6.0, stress_level=None
+    - 'нормально' / 'хорошо выспался' / 'плохо' -> оба None, но текст
+      сохраняется как raw_note (не теряем информацию, просто не смогли
+      извлечь структурированные числа)
+    Детерминированно (regex), не DeepSeek — числа часов/уровня извлекаются
+    по позиции рядом с ключевыми словами 'сон'/'спал'/'стресс', не
+    требуют понимания сложного контекста.
+
+    Возвращает dict {"sleep_hours": float|None, "stress_level": int|None,
+    "raw_note": str} — всегда непустой, никогда не 'не понял' (в отличие
+    от parse_weight_kg, здесь нет обязательного числа, свободный ответ
+    типа 'нормально' — валидный самодостаточный ответ)."""
+    t = text.strip().lower()
+
+    sleep_hours = None
+    sleep_match = re.search(r"(?:сон|спал|спала)\D{0,10}?(\d+(?:[.,]\d+)?)", t)
+    if sleep_match:
+        sleep_hours = float(sleep_match.group(1).replace(",", "."))
+
+    stress_level = None
+    stress_match = re.search(r"стресс\D{0,10}?(\d+)", t)
+    if stress_match:
+        stress_level = int(stress_match.group(1))
+
+    return {"sleep_hours": sleep_hours, "stress_level": stress_level, "raw_note": text.strip()}
+
+
+def set_wellness(data, sleep_hours, stress_level, raw_note=""):
+    """Сохраняет дневник самочувствия для сессии, снимает флаг ожидания.
+    Возвращает True, если сессия была активна, False иначе (не падает
+    на некорректном состоянии)."""
+    session = data.get("active_session")
+    if not session:
+        return False
+    session["sleep_hours"] = sleep_hours
+    session["stress_level"] = stress_level
+    session["wellness_note"] = raw_note
+    session["awaiting_wellness_input"] = False
+    return True
+
+
 def set_body_weight(data, weight_kg):
-    """Сохраняет вес тела для этой сессии, снимает флаг ожидания.
-    Возвращает True, если сессия была активна и ждала веса, False если
-    нет активной сессии (вызывающий код не должен был сюда попасть, но
-    функция не падает на некорректном состоянии, просто ничего не делает)."""
+    """Сохраняет вес тела для этой сессии, снимает флаг ожидания веса,
+    ставит флаг ожидания дневника самочувствия (сон/стресс — следующий
+    вопрос перед показом плана). Возвращает True, если сессия была
+    активна и ждала веса, False если нет активной сессии (вызывающий
+    код не должен был сюда попасть, но функция не падает на некорректном
+    состоянии, просто ничего не делает)."""
     session = data.get("active_session")
     if not session:
         return False
     session["body_weight_kg"] = weight_kg
     session["awaiting_weight_input"] = False
+    session["awaiting_wellness_input"] = True
     return True
 
 
 def build_session_report(data, exercises, session_date, day_id=None,
-                          body_weight_kg=None, duration_minutes=None):
-    """Строит текст отчёта: по каждому упражнению сессии —
+                          body_weight_kg=None, duration_minutes=None,
+                          sleep_hours=None, stress_level=None):
+    """Строит текст отчёта: заголовок + дневник самочувствия (если
+    заполнен), по каждому упражнению сессии —
     (1) план/факт: сравнение фактических подходов с планом программы,
         если day_id известен и упражнение реально есть в плане этого
         дня (может не быть — например, если Антон записал что-то не
@@ -558,7 +624,16 @@ def build_session_report(data, exercises, session_date, day_id=None,
     if not exercises:
         return "Тренировка завершена, но ни одного подхода не записано."
 
-    lines = ["\U0001f3c1 <b>Тренировка завершена</b>\n"]
+    lines = ["\U0001f3c1 <b>Тренировка завершена</b>"]
+    if sleep_hours is not None or stress_level is not None:
+        wellness_parts = []
+        if sleep_hours is not None:
+            wellness_parts.append(f"сон {sleep_hours}ч")
+        if stress_level is not None:
+            wellness_parts.append(f"стресс {stress_level}/10")
+        lines.append(f"\U0001f634 {', '.join(wellness_parts)}")
+    lines[-1] += "\n"  # пустая строка после последней строки заголовка/самочувствия
+
     day_plan = prog.get_day_plan(day_id) if day_id else None
     total_tonnage = 0.0
 

@@ -245,14 +245,25 @@ def handle_session_start(data):
 
 def handle_weight_answer(data, text):
     """Обрабатывает ответ на вопрос о весе тела — session.parse_weight_kg
-    вытаскивает число, session.set_body_weight сохраняет и снимает флаг
-    ожидания. После этого показывает план дня + первое упражнение (то,
-    что раньше показывал handle_session_start сразу)."""
+    вытаскивает число, session.set_body_weight сохраняет, снимает флаг
+    ожидания веса и ставит флаг ожидания дневника самочувствия (сон/
+    стресс — следующий вопрос перед показом плана)."""
     weight = sess.parse_weight_kg(text)
     if weight is None:
         return "Не понял вес — напиши просто число, например 121 или 121.5."
 
     sess.set_body_weight(data, weight)
+    return "Как спал и какой стресс? Например «спал 7, стресс 4» — или просто «нормально», если не хочешь цифрами."
+
+
+def handle_wellness_answer(data, text):
+    """Обрабатывает ответ на вопрос о сне/стрессе — session.
+    parse_wellness_answer гибко извлекает числа (если есть),
+    session.set_wellness сохраняет. После этого показывает план дня +
+    первое упражнение (то, что раньше показывал handle_weight_answer
+    сразу после веса)."""
+    parsed = sess.parse_wellness_answer(text)
+    sess.set_wellness(data, parsed["sleep_hours"], parsed["stress_level"], parsed["raw_note"])
 
     session = data["active_session"]
     day_id = session["day_id"]
@@ -555,6 +566,10 @@ def main():
             outgoing.append((handle_weight_answer(data, text), None, None))
             continue
 
+        if sess.is_awaiting_wellness_input(data):
+            outgoing.append((handle_wellness_answer(data, text), None, None))
+            continue
+
         if sess.is_progress_request(text):
             outgoing.append((handle_progress_request(data, text), None, None))
             continue
@@ -575,6 +590,8 @@ def main():
                     day_id=session_result["day_id"],
                     body_weight_kg=session_result["body_weight_kg"],
                     duration_minutes=session_result["duration_minutes"],
+                    sleep_hours=session_result["sleep_hours"],
+                    stress_level=session_result["stress_level"],
                 )
                 outgoing.append((report, None, None))
             continue

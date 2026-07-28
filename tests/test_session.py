@@ -833,3 +833,114 @@ def test_mark_daily_reminder_sent_stores_msk_date():
     late_utc = datetime(2026, 7, 27, 23, 30, tzinfo=timezone.utc)
     sess.mark_daily_reminder_sent(data, now=late_utc)
     assert data["daily_reminder_sent_date"] == "2026-07-28"  # МСК уже следующий день
+
+
+# --- is_awaiting_wellness_input / parse_wellness_answer / set_wellness ---
+
+def test_is_awaiting_wellness_input_false_without_session():
+    data = w.load_workouts()
+    assert sess.is_awaiting_wellness_input(data) is False
+
+
+def test_set_body_weight_triggers_wellness_question():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    assert sess.is_awaiting_wellness_input(data) is False  # ещё не спросили вес
+    sess.set_body_weight(data, 121.0)
+    assert sess.is_awaiting_weight_input(data) is False  # вес больше не ждём
+    assert sess.is_awaiting_wellness_input(data) is True  # теперь ждём самочувствие
+
+
+def test_parse_wellness_answer_sleep_and_stress():
+    result = sess.parse_wellness_answer("спал 7, стресс 4")
+    assert result["sleep_hours"] == 7.0
+    assert result["stress_level"] == 4
+
+
+def test_parse_wellness_answer_sleep_only():
+    result = sess.parse_wellness_answer("сон 6 часов")
+    assert result["sleep_hours"] == 6.0
+    assert result["stress_level"] is None
+
+
+def test_parse_wellness_answer_stress_only():
+    result = sess.parse_wellness_answer("стресс 8")
+    assert result["stress_level"] == 8
+    assert result["sleep_hours"] is None
+
+
+def test_parse_wellness_answer_free_text_no_numbers():
+    result = sess.parse_wellness_answer("нормально")
+    assert result["sleep_hours"] is None
+    assert result["stress_level"] is None
+    assert result["raw_note"] == "нормально"
+
+
+def test_parse_wellness_answer_always_returns_dict():
+    # В отличие от parse_weight_kg, здесь нет 'не понял' — свободный
+    # ответ без чисел валиден сам по себе
+    result = sess.parse_wellness_answer("плохо выспался, тяжёлый день")
+    assert isinstance(result, dict)
+    assert "raw_note" in result
+
+
+def test_set_wellness_saves_and_clears_flag():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.set_body_weight(data, 121.0)
+    result = sess.set_wellness(data, sleep_hours=7.0, stress_level=4, raw_note="спал 7, стресс 4")
+    assert result is True
+    assert data["active_session"]["sleep_hours"] == 7.0
+    assert data["active_session"]["stress_level"] == 4
+    assert sess.is_awaiting_wellness_input(data) is False
+
+
+def test_set_wellness_no_active_session_returns_false():
+    data = w.load_workouts()
+    assert sess.set_wellness(data, sleep_hours=7.0, stress_level=4) is False
+
+
+# --- end_session / build_session_report: самочувствие ------------------
+
+def test_end_session_returns_wellness_fields():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.set_body_weight(data, 121.0)
+    sess.set_wellness(data, sleep_hours=7.0, stress_level=4, raw_note="спал 7, стресс 4")
+    result = sess.end_session(data)
+    assert result["sleep_hours"] == 7.0
+    assert result["stress_level"] == 4
+
+
+def test_end_session_wellness_none_when_not_set():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    result = sess.end_session(data)
+    assert result["sleep_hours"] is None
+    assert result["stress_level"] is None
+
+
+def test_report_shows_wellness_when_provided():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(
+        data, ["присед"], "2026-07-28", sleep_hours=7.0, stress_level=4
+    )
+    assert "сон 7.0ч" in report
+    assert "стресс 4/10" in report
+
+
+def test_report_no_wellness_section_when_not_provided():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28")
+    assert "сон" not in report
+    assert "стресс" not in report
+
+
+def test_report_shows_only_sleep_without_stress():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28", sleep_hours=6.5)
+    assert "сон 6.5ч" in report
+    assert "стресс" not in report

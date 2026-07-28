@@ -225,15 +225,18 @@ def test_session_start_already_active_after_weight_given():
 # --- handle_weight_answer -------------------------------------------
 
 def test_weight_answer_shows_plan_after_valid_number():
+    # ОБНОВЛЕНО: между весом и планом теперь вопрос о самочувствии —
+    # handle_weight_answer больше не показывает план сразу
     data = w.load_workouts()
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
-    result = bot.handle_weight_answer(data, "121.5")
+    weight_result = bot.handle_weight_answer(data, "121.5")
+    assert data["active_session"]["body_weight_kg"] == 121.5
+    result = bot.handle_wellness_answer(data, "нормально")
     assert "День 1" in result
     assert "Vertical Traction" in result
     assert "взял" in result
-    assert data["active_session"]["body_weight_kg"] == 121.5
 
 
 def test_weight_answer_saves_body_weight():
@@ -355,6 +358,7 @@ def _run_full_day(data, fake_date):
         mock_prog_dt.now.return_value = fake_date
         bot.handle_session_start(data)
         bot.handle_weight_answer(data, "121")
+        bot.handle_wellness_answer(data, "нормально")
         last_result = None
         for _ in range(4):  # ровно 4 подхода упражнения 1
             last_result = bot.handle_set_confirmation(data)
@@ -403,7 +407,8 @@ def test_confirmed_progression_shows_in_next_session_plan():
         mock_sess_dt.now.return_value = fake_date
         mock_prog_dt.now.return_value = fake_date
         bot.handle_session_start(data)
-        plan_text = bot.handle_weight_answer(data, "121")
+        bot.handle_weight_answer(data, "121")
+        plan_text = bot.handle_wellness_answer(data, "нормально")
 
     assert "52.5кг" in plan_text
     assert "45-50кг" not in plan_text
@@ -675,3 +680,71 @@ def test_handle_progress_unmatched_query_suggests_known_exercises():
     result = bot.handle_progress_request(data, "прогресс по бегу")
     assert "не нашёл" in result.lower()
     assert "присед" in result
+
+
+# --- handle_weight_answer / handle_wellness_answer ------------------
+
+def test_weight_answer_now_asks_wellness_not_plan():
+    # Изменение поведения: раньше вес сразу показывал план, теперь
+    # спрашивает самочувствие — план сдвинут на следующий шаг
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    result = bot.handle_weight_answer(data, "121")
+    assert "спал" in result.lower() or "стресс" in result.lower()
+    assert "День 1" not in result  # план ещё не показан
+
+
+def test_wellness_answer_shows_plan():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    result = bot.handle_wellness_answer(data, "спал 7, стресс 4")
+    assert "День 1" in result
+    assert "Vertical Traction" in result
+
+
+def test_wellness_answer_saves_sleep_and_stress():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_wellness_answer(data, "спал 7, стресс 4")
+    assert data["active_session"]["sleep_hours"] == 7.0
+    assert data["active_session"]["stress_level"] == 4
+
+
+def test_wellness_answer_accepts_free_text():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    result = bot.handle_wellness_answer(data, "нормально")
+    assert "День 1" in result  # план всё равно показан, даже без чисел
+    assert sess.is_awaiting_wellness_input(data) is False
+
+
+def test_end_to_end_wellness_shows_in_final_report():
+    data = w.load_workouts()
+    data["sets"] = []
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_wellness_answer(data, "спал 7, стресс 4")
+    bot.handle_set_confirmation(data)
+
+    session_result = bot.sess.end_session(data)
+    report = bot.sess.build_session_report(
+        data, session_result["exercises"], session_result["date"],
+        day_id=session_result["day_id"], body_weight_kg=session_result["body_weight_kg"],
+        duration_minutes=session_result["duration_minutes"],
+        sleep_hours=session_result["sleep_hours"], stress_level=session_result["stress_level"],
+    )
+    assert "сон 7.0ч" in report
+    assert "стресс 4/10" in report
