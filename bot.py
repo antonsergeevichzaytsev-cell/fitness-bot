@@ -60,6 +60,7 @@ import parser
 import program as prog
 import progression
 import safety
+import sanity
 import session as sess
 import workouts as w
 
@@ -160,7 +161,8 @@ def make_suggestion_id(exercise):
 def handle_workout_message(text, data):
     """Парсит текст, записывает сеты, возвращает список текстов для
     отправки (подтверждение записи + возможное предложение прогрессии),
-    либо один текст с уточняющим вопросом при uncertain."""
+    либо один текст с уточняющим вопросом при uncertain ИЛИ подозрительном
+    значении (sanity.check_weight_reps_sanity)."""
     parsed = parser.parse_workout_text(text)
 
     if parsed.get("uncertain"):
@@ -169,6 +171,19 @@ def handle_workout_message(text, data):
     sets = parsed.get("sets", [])
     if not sets:
         return ["Не нашёл в сообщении ни одного подхода — можешь переформулировать?"]
+
+    # Проверка реалистичности ПЕРЕД записью любого сета — если хоть один
+    # подозрителен (вероятная опечатка), останавливаемся и переспрашиваем,
+    # НЕ записываем НИ ОДИН сет из этого сообщения. Частичная запись
+    # ("записал первые 2 подхода, а 3-й спросил") сложнее для Антона
+    # понять, что уже в истории, а что нет — проще переспросить всё сразу.
+    for s in sets:
+        sanity_result = sanity.check_weight_reps_sanity(
+            data, s.get("exercise", ""), s.get("weight_kg"), s.get("reps"),
+            aliases=data.get("exercise_aliases", {}),
+        )
+        if sanity_result["suspicious"]:
+            return [sanity_result["question"]]
 
     today = datetime.now(timezone.utc).date().isoformat()
     recorded_exercises = set()

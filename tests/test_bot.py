@@ -748,3 +748,60 @@ def test_end_to_end_wellness_shows_in_final_report():
     )
     assert "сон 7.0ч" in report
     assert "стресс 4/10" in report
+
+
+# --- sanity check в handle_workout_message -------------------------------
+
+def test_handle_workout_message_blocks_on_weight_typo():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "Vertical Traction (тяга сверху к груди)", "weight_kg": 500.0, "reps": 9, "rpe": None, "note": ""}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        result = bot.handle_workout_message("тяга 500 на 9", data)
+    assert "сильно отличается" in result[0]
+    assert data["sets"] == []
+
+
+def test_handle_workout_message_allows_normal_weight():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "Vertical Traction (тяга сверху к груди)", "weight_kg": 47.5, "reps": 9, "rpe": None, "note": ""}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        result = bot.handle_workout_message("тяга 47.5 на 9", data)
+    assert "Записал" in result[0]
+    assert len(data["sets"]) == 1
+
+
+def test_handle_workout_message_allows_legitimate_progression():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "Vertical Traction (тяга сверху к груди)", "weight_kg": 55.0, "reps": 9, "rpe": None, "note": ""}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        result = bot.handle_workout_message("тяга 55 на 9", data)
+    assert "Записал" in result[0]  # +5кг сверх плана — не должно блокироваться
+
+
+def test_handle_workout_message_blocks_none_of_multiple_sets_if_one_suspicious():
+    # Если в одном сообщении несколько сетов и один подозрителен —
+    # НИ ОДИН не записывается (проще переспросить всё, чем частично)
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [
+            {"exercise": "Vertical Traction (тяга сверху к груди)", "weight_kg": 47.5, "reps": 9, "rpe": None, "note": ""},
+            {"exercise": "Vertical Traction (тяга сверху к груди)", "weight_kg": 500.0, "reps": 9, "rpe": None, "note": ""},
+        ],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        bot.handle_workout_message("тяга 47.5 на 9, потом 500 на 9", data)
+    assert data["sets"] == []
