@@ -340,6 +340,75 @@ def test_set_confirmation_exercise_complete_shows_plan_vs_fact():
     assert plan_vs_fact.count("\u2705") == 4  # все 4 подхода по плану
 
 
+# --- прогрессия в пошаговом флоу -----------------------------------------
+# Найдено 28.07.2026: progression.py существовал, но был подключён ТОЛЬКО
+# к handle_workout_message (свободный текст) — пошаговый флоу 'взял' не
+# вызывал suggest_progression вообще, вся автопрогрессия была мертва для
+# основного режима использования бота. Плюс вторая находка: даже после
+# подключения, подтверждённый target не отображался в плане (закрыто
+# в program.format_day_plan_with_targets, см. test_program.py).
+
+def _run_full_day(data, fake_date):
+    with mock.patch("session.datetime") as mock_sess_dt, \
+         mock.patch("program.datetime") as mock_prog_dt:
+        mock_sess_dt.now.return_value = fake_date
+        mock_prog_dt.now.return_value = fake_date
+        bot.handle_session_start(data)
+        bot.handle_weight_answer(data, "121")
+        last_result = None
+        for _ in range(4):  # ровно 4 подхода упражнения 1
+            last_result = bot.handle_set_confirmation(data)
+    return last_result
+
+
+def test_no_progression_suggestion_after_single_session():
+    data = w.load_workouts()
+    result = _run_full_day(data, datetime(2026, 7, 27, tzinfo=timezone.utc))
+    suggestions = [m for m in result if isinstance(m, tuple)]
+    assert suggestions == []  # только 1 сессия — недостаточно истории
+
+
+def test_progression_suggestion_appears_after_two_clean_sessions():
+    data = w.load_workouts()
+    _run_full_day(data, datetime(2026, 7, 20, tzinfo=timezone.utc))
+    with mock.patch("session.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        bot.sess.end_session(data)
+
+    result2 = _run_full_day(data, datetime(2026, 7, 27, tzinfo=timezone.utc))
+    suggestions = [m for m in result2 if isinstance(m, tuple)]
+    assert len(suggestions) == 1
+    assert "поднять вес" in suggestions[0][1]
+    assert "52.5" in suggestions[0][1]  # 50 + WEIGHT_STEP_KG (2.5)
+
+
+def test_confirmed_progression_shows_in_next_session_plan():
+    data = w.load_workouts()
+    _run_full_day(data, datetime(2026, 7, 20, tzinfo=timezone.utc))
+    with mock.patch("session.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        bot.sess.end_session(data)
+
+    result2 = _run_full_day(data, datetime(2026, 7, 27, tzinfo=timezone.utc))
+    suggestion_id = [m[0] for m in result2 if isinstance(m, tuple)][0]
+    bot.handle_callback(f"sugg:confirm:{suggestion_id}", data)
+    with mock.patch("session.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.sess.end_session(data)
+
+    # сессия 3 — план должен показать НОВЫЙ вес, не старый статичный
+    with mock.patch("session.datetime") as mock_sess_dt, \
+         mock.patch("program.datetime") as mock_prog_dt:
+        fake_date = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        mock_sess_dt.now.return_value = fake_date
+        mock_prog_dt.now.return_value = fake_date
+        bot.handle_session_start(data)
+        plan_text = bot.handle_weight_answer(data, "121")
+
+    assert "52.5кг" in plan_text
+    assert "45-50кг" not in plan_text
+
+
 # --- handle_extend_rest -------------------------------------------------
 
 def test_handle_extend_rest_without_active_rest():

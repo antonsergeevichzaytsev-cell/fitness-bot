@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, "..")
 import program as p
 import safety
+import workouts as w
 
 
 # --- today_day_id ------------------------------------------------------
@@ -234,4 +235,38 @@ def test_format_plan_vs_fact_handles_no_weight_set():
     actual_sets = [{"set_number": 1, "weight_kg": None, "reps": 9}]
     report = p.format_exercise_plan_vs_fact(ex, actual_sets)
     assert "б/в" in report  # без веса, не падает на None
+
+
+# --- format_day_plan_with_targets ----------------------------------------
+# Найдено 28.07.2026: target прогрессии сохранялся через w.set_target
+# при подтверждении, но НИКОГДА не отображался в плане и не применялся
+# при показе — format_day_plan была чистой read-only функцией, не знающей
+# о состоянии workouts.json. Этот блок тестов защищает фикс.
+
+def test_format_day_plan_with_targets_shows_static_weight_when_no_target():
+    data = w.load_workouts()
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "45-50кг" in plan  # без target — обычный план из программы
+
+
+def test_format_day_plan_with_targets_shows_confirmed_target_weight():
+    data = w.load_workouts()
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "52.5кг" in plan
+    assert "45-50кг" not in plan  # старый диапазон больше не показывается
+
+
+def test_format_day_plan_with_targets_only_affects_targeted_exercise():
+    data = w.load_workouts()
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    plan = p.format_day_plan_with_targets("1", data)
+    assert "65-70кг" in plan  # Low Row без target — план не тронут
+
+
+def test_format_day_plan_with_targets_unknown_day_returns_none():
+    data = w.load_workouts()
+    assert p.format_day_plan_with_targets("99", data) is None
 

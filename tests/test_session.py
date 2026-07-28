@@ -330,6 +330,62 @@ def test_current_exercise_info_none_after_day_exhausted():
     assert ex is None and set_num is None
 
 
+def test_current_exercise_info_applies_confirmed_target():
+    # Регрессия на находку 28.07.2026: target прогрессии сохранялся
+    # через w.set_target, но НИКОГДА не применялся в пошаговом флоу —
+    # current_exercise_info продолжала бы отдавать старый вес из
+    # training_program.json. Этот тест защищает фикс.
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["weight_min_kg"] == 52.5
+    assert ex["weight_max_kg"] == 52.5
+
+
+def test_current_exercise_info_no_target_uses_static_plan():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["weight_min_kg"] == 45  # без target — оригинальный план
+    assert ex["weight_max_kg"] == 50
+
+
+def test_current_exercise_info_target_does_not_mutate_program_json():
+    # Копия dict, не мутация shared training_program.json в памяти —
+    # иначе target одного упражнения "протёк" бы в program.load_program()
+    # для всех последующих вызовов в этом же процессе
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+    sess.current_exercise_info(data)  # применяет target
+
+    fresh_ex = prog.get_exercise("1", 1)  # прямой доступ к статичному плану
+    assert fresh_ex["weight_min_kg"] == 45  # не изменилось
+
+
+def test_current_exercise_info_replacement_override_takes_priority_over_target():
+    # Приоритет: exercise_overrides (ручная замена тренажёра) важнее
+    # target (автопрогрессия веса того же упражнения) — замена меняет
+    # упражнение целиком, target бессмыслен для другого упражнения
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.set_target(data, normalized, 52.5, 8)
+
+    replacement = {
+        "name": "Cable Row замена", "machine": "Кроссовер", "sets": 4,
+        "reps_min": 8, "reps_max": 10, "weight_min_kg": 30, "weight_max_kg": 35,
+        "tempo": "2-1-2-0", "rest_sec": 90, "order": 1, "per_side": False,
+    }
+    sess.apply_replacement(data, 1, replacement)
+
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Cable Row замена"  # замена, не оригинал с target
+
+
 # --- advance_position -----------------------------------------------------
 
 def test_advance_position_no_active_session_records_nothing():

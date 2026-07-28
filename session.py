@@ -228,12 +228,17 @@ def current_exercise_info(data):
     активной сессии, или (None, None) если сессия не активна, день не
     определён, или упражнения в дне кончились (день пройден).
 
-    Если для текущего order есть замена (session['exercise_overrides']
-    — установлена apply_replacement при подтверждении замены тренажёра/
-    упражнения), возвращает её вместо статичного плана из
-    training_program.json. Замена действует ТОЛЬКО для этой сессии —
-    базовая программа не меняется, order (позиция во флоу) остаётся
-    прежним, меняются только параметры (имя/вес/повторы/темп/отдых)."""
+    Приоритет модификаций плана (первое совпадение побеждает):
+    1. exercise_overrides (замена упражнения через apply_replacement) —
+       ручная, явная замена на другой тренажёр/упражнение целиком.
+    2. targets из workouts.json (подтверждённая прогрессия через
+       progression.py + confirm-кнопку) — вес/повторы того же
+       упражнения подняты, само упражнение не меняется.
+    3. Статичный план из training_program.json — как задумано изначально.
+
+    Замена действует ТОЛЬКО для этой сессии. Target — до следующего
+    подтверждения (перезаписывается новым confirm, не откатывается
+    автоматически)."""
     session = data.get("active_session")
     if not session or not session.get("day_id"):
         return None, None
@@ -248,6 +253,13 @@ def current_exercise_info(data):
     ex = prog.get_exercise(session["day_id"], order)
     if not ex:
         return None, None  # order вышел за пределы дня — упражнения кончились
+
+    normalized_name = w.normalize_exercise_name(ex["name"], data.get("exercise_aliases", {}))
+    target = w.get_target(data, normalized_name)
+    if target:
+        ex = dict(ex)  # копия, не мутируем training_program.json в памяти
+        ex["weight_min_kg"] = target["weight_kg"]
+        ex["weight_max_kg"] = target["weight_kg"]
     return ex, session.get("current_set_number", 1)
 
 

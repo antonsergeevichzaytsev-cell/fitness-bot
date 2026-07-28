@@ -256,7 +256,7 @@ def handle_weight_answer(data, text):
 
     session = data["active_session"]
     day_id = session["day_id"]
-    day_plan = prog.format_day_plan(day_id)
+    day_plan = prog.format_day_plan_with_targets(day_id, data)
     ex, set_num = sess.current_exercise_info(data)
     first_exercise = prog.format_exercise_line(ex)
     return (
@@ -396,6 +396,30 @@ def handle_set_confirmation(data):
         ]
         actual_sets.sort(key=lambda s: s["set_number"])
         messages.append(prog.format_exercise_plan_vs_fact(completed, actual_sets))
+
+        # Прогрессия: пошаговый флоу ('взял') всегда пишет weight_max_kg/
+        # reps_max из плана — не то, что реально поднято 'через силу'.
+        # Поэтому rep_range берём ИЗ ЭТОГО упражнения (не общий дефолт
+        # progression.py), и решение о прогрессии опирается не на 'достиг
+        # ли верхней границы' (это всегда true в этом флоу по построению),
+        # а на 'не было ли явного сигнала трудности' (RPE/note — их можно
+        # добавить только текстом отдельно, не через короткое 'взял').
+        suggestion = progression.suggest_progression(
+            data, normalized, rep_range=(completed["reps_min"], completed["reps_max"])
+        )
+        if suggestion:
+            suggestion_id = make_suggestion_id(normalized)
+            data.setdefault("pending_suggestions", []).append({
+                "id": suggestion_id,
+                "exercise": normalized,
+                "suggested_weight_kg": suggestion["suggested_weight_kg"],
+                "suggested_reps": suggestion["suggested_reps"],
+                "reasoning": suggestion["reasoning"],
+                "message_id": None,
+                "status": "pending",
+                "created_ts": datetime.now(timezone.utc).isoformat(),
+            })
+            messages.append((suggestion_id, progression.format_suggestion_message(normalized, suggestion)))
 
     if result["day_complete"]:
         messages.append(
@@ -545,8 +569,12 @@ def main():
             continue
 
         if sess.is_set_confirmation(text):
-            for msg_text in handle_set_confirmation(data):
-                outgoing.append((msg_text, None, None))
+            for item in handle_set_confirmation(data):
+                if isinstance(item, tuple):
+                    suggestion_id, msg_text = item
+                    outgoing.append((msg_text, suggestion_keyboard(suggestion_id), suggestion_id))
+                else:
+                    outgoing.append((item, None, None))
             continue
 
         results = handle_workout_message(text, data)

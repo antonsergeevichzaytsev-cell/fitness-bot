@@ -8,6 +8,8 @@ import json
 import os
 from datetime import datetime, timezone
 
+import workouts as w
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 PROGRAM_PATH = os.path.join(ROOT, "training_program.json")
 
@@ -74,12 +76,38 @@ def format_exercise_line(ex):
 
 
 def format_day_plan(day_id, program=None):
-    """Полный текст плана на день — список всех упражнений с параметрами."""
+    """Полный текст плана на день — список всех упражнений с параметрами.
+    Показывает СТАТИЧНЫЙ план из training_program.json, БЕЗ учёта
+    подтверждённых targets прогрессии (см. format_day_plan_with_targets
+    для версии, которая их применяет) — эта функция чистая, не знает о
+    состоянии workouts.json."""
     day = get_day_plan(day_id, program)
     if not day:
         return None
     lines = [f"<b>День {day_id} — {day['name']}</b>\n"]
     for ex in day["exercises"]:
+        lines.append(format_exercise_line(ex))
+    return "\n\n".join(lines)
+
+
+def format_day_plan_with_targets(day_id, workouts_data, program=None):
+    """То же, что format_day_plan, но применяет подтверждённые targets
+    прогрессии (workouts.get_target) к каждому упражнению перед
+    отображением — иначе план в начале тренировки показывал бы старый
+    вес даже после того, как Антон подтвердил прогрессию на прошлой
+    сессии (найдено 28.07.2026: target сохранялся, но никогда не
+    отображался и не применялся при показе плана дня)."""
+    day = get_day_plan(day_id, program)
+    if not day:
+        return None
+    lines = [f"<b>День {day_id} — {day['name']}</b>\n"]
+    for ex in day["exercises"]:
+        normalized = w.normalize_exercise_name(ex["name"], workouts_data.get("exercise_aliases", {}))
+        target = w.get_target(workouts_data, normalized)
+        if target:
+            ex = dict(ex)
+            ex["weight_min_kg"] = target["weight_kg"]
+            ex["weight_max_kg"] = target["weight_kg"]
         lines.append(format_exercise_line(ex))
     return "\n\n".join(lines)
 
