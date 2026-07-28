@@ -82,3 +82,53 @@ def format_day_plan(day_id, program=None):
     for ex in day["exercises"]:
         lines.append(format_exercise_line(ex))
     return "\n\n".join(lines)
+
+
+def _set_status(ex, actual_weight_kg, actual_reps):
+    """Сравнивает один фактический подход с диапазоном плана, возвращает
+    (эмодзи, текст) статуса. Вес null в плане ('по ощущению') не
+    сравнивается — только повторы."""
+    reps_ok = ex["reps_min"] <= actual_reps <= ex["reps_max"]
+
+    if ex["weight_min_kg"] is None:
+        # план "по ощущению" — сравниваем только повторы
+        return ("\u2705", "по плану") if reps_ok else ("\u26a0\ufe0f", "повторы вне плана")
+
+    weight_ok = ex["weight_min_kg"] <= actual_weight_kg <= ex["weight_max_kg"]
+
+    if weight_ok and reps_ok:
+        return "\u2705", "по плану"
+    if actual_weight_kg > ex["weight_max_kg"] or actual_reps > ex["reps_max"]:
+        return "\U0001f4c8", "сверх плана"
+    return "\U0001f4c9", "ниже плана"
+
+
+def format_exercise_plan_vs_fact(ex, actual_sets):
+    """План/факт по одному завершённому упражнению — построчно по
+    каждому подходу: плановый диапазон vs фактически записанный
+    вес/повторы, с эмодзи-статусом (по плану / сверх / ниже).
+
+    actual_sets — список записей из workouts.py (data['sets'],
+    отфильтрованных по этому упражнению и сегодняшней дате), в порядке
+    set_number по возрастанию. Может быть короче ex['sets'], если
+    упражнение не завершено (вызывающий код обычно вызывает это только
+    когда exercise_complete=True, но функция не требует этого сама)."""
+    if ex["weight_min_kg"] is None:
+        plan_weight = "по ощущению"
+    elif ex["weight_min_kg"] == ex["weight_max_kg"]:
+        plan_weight = f"{ex['weight_min_kg']}кг"
+    else:
+        plan_weight = f"{ex['weight_min_kg']}-{ex['weight_max_kg']}кг"
+    plan_reps = (
+        f"{ex['reps_min']}-{ex['reps_max']}" if ex["reps_min"] != ex["reps_max"]
+        else str(ex["reps_min"])
+    )
+
+    lines = [f"<b>{ex['name']}</b> — план: {ex['sets']} x {plan_reps}, {plan_weight}\n"]
+    for s in actual_sets:
+        emoji, status = _set_status(ex, s.get("weight_kg") or 0, s.get("reps", 0))
+        weight_str = f"{s['weight_kg']}кг" if s.get("weight_kg") is not None else "б/в"
+        lines.append(f"  Подход {s['set_number']}: {weight_str} \u00d7 {s['reps']} {emoji} {status}")
+
+    return "\n".join(lines)
+

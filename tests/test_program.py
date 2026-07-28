@@ -142,3 +142,96 @@ def test_all_program_exercises_pass_safety_check():
             )
             total += 1
     assert total == 31  # 8+7+8+8, сверка с документом
+
+
+# --- _set_status --------------------------------------------------------
+
+def test_set_status_on_plan():
+    ex = p.get_exercise("1", 1)  # 8-10 reps, 45-50кг
+    emoji, status = p._set_status(ex, 47.5, 9)
+    assert status == "по плану"
+    assert emoji == "\u2705"
+
+
+def test_set_status_above_plan_by_weight():
+    ex = p.get_exercise("1", 1)
+    emoji, status = p._set_status(ex, 52.5, 10)  # вес выше max
+    assert status == "сверх плана"
+    assert emoji == "\U0001f4c8"
+
+
+def test_set_status_above_plan_by_reps():
+    ex = p.get_exercise("1", 1)
+    emoji, status = p._set_status(ex, 47.5, 12)  # повторы выше max
+    assert status == "сверх плана"
+
+
+def test_set_status_below_plan_by_weight():
+    ex = p.get_exercise("1", 1)
+    emoji, status = p._set_status(ex, 40.0, 9)  # вес ниже min
+    assert status == "ниже плана"
+    assert emoji == "\U0001f4c9"
+
+
+def test_set_status_below_plan_by_reps():
+    ex = p.get_exercise("1", 1)
+    emoji, status = p._set_status(ex, 47.5, 6)  # повторы ниже min
+    assert status == "ниже плана"
+
+
+def test_set_status_by_feel_weight_only_compares_reps():
+    ex = p.get_exercise("2", 2)  # Hammer Iso-Lateral, по ощущению
+    emoji_ok, status_ok = p._set_status(ex, 999.0, 11)  # любой вес ок
+    assert status_ok == "по плану"
+    emoji_bad, status_bad = p._set_status(ex, 999.0, 6)  # только повторы вне плана
+    assert status_bad == "повторы вне плана"
+
+
+def test_set_status_exact_boundary_counts_as_on_plan():
+    ex = p.get_exercise("1", 1)  # 45-50кг, 8-10 reps
+    emoji, status = p._set_status(ex, 45.0, 8)  # ровно нижняя граница
+    assert status == "по плану"
+    emoji2, status2 = p._set_status(ex, 50.0, 10)  # ровно верхняя граница
+    assert status2 == "по плану"
+
+
+# --- format_exercise_plan_vs_fact ---------------------------------------
+
+def test_format_plan_vs_fact_includes_exercise_name_and_plan():
+    ex = p.get_exercise("1", 1)
+    report = p.format_exercise_plan_vs_fact(ex, [])
+    assert ex["name"] in report
+    assert "8-10" in report
+    assert "45-50кг" in report
+
+
+def test_format_plan_vs_fact_lists_each_set():
+    ex = p.get_exercise("1", 1)
+    actual_sets = [
+        {"set_number": 1, "weight_kg": 47.5, "reps": 9},
+        {"set_number": 2, "weight_kg": 50.0, "reps": 10},
+    ]
+    report = p.format_exercise_plan_vs_fact(ex, actual_sets)
+    assert "Подход 1" in report
+    assert "Подход 2" in report
+    assert "47.5кг" in report
+    assert "50.0кг" in report
+
+
+def test_format_plan_vs_fact_shows_status_emoji_per_set():
+    ex = p.get_exercise("1", 1)
+    actual_sets = [
+        {"set_number": 1, "weight_kg": 47.5, "reps": 9},   # по плану
+        {"set_number": 2, "weight_kg": 52.5, "reps": 10},  # сверх
+    ]
+    report = p.format_exercise_plan_vs_fact(ex, actual_sets)
+    assert "\u2705" in report
+    assert "\U0001f4c8" in report
+
+
+def test_format_plan_vs_fact_handles_no_weight_set():
+    ex = p.get_exercise("1", 1)
+    actual_sets = [{"set_number": 1, "weight_kg": None, "reps": 9}]
+    report = p.format_exercise_plan_vs_fact(ex, actual_sets)
+    assert "б/в" in report  # без веса, не падает на None
+

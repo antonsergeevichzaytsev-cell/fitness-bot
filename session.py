@@ -117,6 +117,13 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
     Возвращает dict с ключами:
         "recorded_exercise": имя записанного упражнения (или None,
             если сессия/позиция невалидна — ничего не записано)
+        "exercise_complete": True, если это был ПОСЛЕДНИЙ подход
+            текущего упражнения (неважно, есть ли следующее упражнение
+            в дне или это конец дня) — сигнал для bot.py показать
+            план/факт статистику по только что завершённому упражнению
+        "completed_exercise": полный dict упражнения из программы
+            (для plan/fact сравнения) — совпадает с ex, если
+            exercise_complete=True, иначе None
         "day_complete": True, если это был последний сет последнего
             упражнения дня — вызывающий код может предложить сразу
             завершить сессию
@@ -131,7 +138,8 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
     """
     ex, set_number = current_exercise_info(data)
     if ex is None:
-        return {"recorded_exercise": None, "day_complete": False,
+        return {"recorded_exercise": None, "exercise_complete": False,
+                "completed_exercise": None, "day_complete": False,
                 "next_exercise": None, "next_set_number": None, "rest_sec": None}
 
     session = data["active_session"]
@@ -154,7 +162,8 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
         # ещё есть подходы в этом же упражнении
         session["current_set_number"] = set_number + 1
         return {
-            "recorded_exercise": ex["name"], "day_complete": False,
+            "recorded_exercise": ex["name"], "exercise_complete": False,
+            "completed_exercise": None, "day_complete": False,
             "next_exercise": ex, "next_set_number": set_number + 1,
             "rest_sec": rest_sec,
         }
@@ -165,7 +174,8 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
     if next_ex is None:
         # это было последнее упражнение дня
         return {
-            "recorded_exercise": ex["name"], "day_complete": True,
+            "recorded_exercise": ex["name"], "exercise_complete": True,
+            "completed_exercise": ex, "day_complete": True,
             "next_exercise": None, "next_set_number": None,
             "rest_sec": rest_sec,
         }
@@ -173,41 +183,55 @@ def advance_position(data, weight_kg, reps, rpe=None, note=""):
     session["current_exercise_order"] = next_order
     session["current_set_number"] = 1
     return {
-        "recorded_exercise": ex["name"], "day_complete": False,
+        "recorded_exercise": ex["name"], "exercise_complete": True,
+        "completed_exercise": ex, "day_complete": False,
         "next_exercise": next_ex, "next_set_number": 1,
         "rest_sec": rest_sec,
     }
 
 
 def end_session(data):
-    """Закрывает сессию, возвращает (exercises_today, session_date) для
-    построения отчёта, либо (None, None) если сессия не была открыта —
-    вызывающий код должен явно обработать этот случай, не молча
-    проигнорировать."""
+    """Закрывает сессию, возвращает (exercises_today, session_date, day_id)
+    для построения отчёта, либо (None, None, None) если сессия не была
+    открыта — вызывающий код должен явно обработать этот случай.
+
+    day_id возвращается ОТДЕЛЬНО (не через active_session), потому что
+    active_session обнуляется тут же — build_session_report() без
+    day_id не сможет сравнить план/факт, только тренд по истории."""
     session = data.get("active_session")
     if not session:
-        return None, None
+        return None, None, None
 
     session_date = session["date"]
+    day_id = session.get("day_id")
     today_sets = [s for s in data.get("sets", []) if s["date"] == session_date]
     exercises_today = sorted({s["exercise"] for s in today_sets})
 
     data["active_session"] = None
-    return exercises_today, session_date
+    return exercises_today, session_date, day_id
 
 
 def is_session_active(data):
     return bool(data.get("active_session"))
 
 
-def build_session_report(data, exercises, session_date):
-    """Строит текст отчёта: по каждому упражнению сессии — сравнение с
-    предыдущей тренировкой этого упражнения (тоннаж туда-сюда), если
-    такая история есть."""
+def build_session_report(data, exercises, session_date, day_id=None):
+    """Строит текст отчёта: по каждому упражнению сессии —
+    (1) план/факт: сравнение фактических подходов с планом программы,
+        если day_id известен и упражнение реально есть в плане этого
+        дня (может не быть — например, если Антон записал что-то не
+        по плану текстом отдельно);
+    (2) тренд: сравнение с предыдущей тренировкой этого упражнения
+        (тоннаж туда-сюда), если такая история есть.
+
+    day_id=None (например, если тренировка началась в день отдыха без
+    явного плана) -> план/факт не показывается, только тренд, как было
+    раньше — обратная совместимость с тренировками без day_id."""
     if not exercises:
         return "Тренировка завершена, но ни одного подхода не записано."
 
     lines = ["\U0001f3c1 <b>Тренировка завершена</b>\n"]
+    day_plan = prog.get_day_plan(day_id) if day_id else None
 
     for exercise in exercises:
         history = w.get_history_for_exercise(data, exercise, limit_sessions=5)
@@ -216,8 +240,19 @@ def build_session_report(data, exercises, session_date):
             continue
         today_sets = today_sessions[0]["sets"]
 
+        plan_ex = None
+        if day_plan:
+            for ex in day_plan["exercises"]:
+                if w.normalize_exercise_name(ex["name"], data.get("exercise_aliases", {})) == exercise:
+                    plan_ex = ex
+                    break
+
+        if plan_ex:
+            summary = prog.format_exercise_plan_vs_fact(plan_ex, today_sets)
+        else:
+            summary = _format_exercise_today(exercise, today_sets)
+
         prior_sessions = [h for h in history if h["date"] < session_date]
-        summary = _format_exercise_today(exercise, today_sets)
         if prior_sessions:
             trend = _format_trend(today_sets, prior_sessions[-1]["sets"])
             summary += f"\n  {trend}"

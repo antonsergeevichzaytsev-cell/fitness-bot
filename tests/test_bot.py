@@ -214,7 +214,8 @@ def test_session_start_already_active_reports_current_position():
 def test_set_confirmation_without_active_session():
     data = w.load_workouts()
     result = bot.handle_set_confirmation(data)
-    assert "нет активной тренировки" in result.lower()
+    assert isinstance(result, list)
+    assert "нет активной тренировки" in result[0].lower()
 
 
 def test_set_confirmation_records_and_shows_rest_timer():
@@ -223,8 +224,9 @@ def test_set_confirmation_records_and_shows_rest_timer():
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
     result = bot.handle_set_confirmation(data)
-    assert "Подход 1/4" in result
-    assert "90 сек" in result
+    combined = "\n".join(result)
+    assert "Подход 1/4" in combined
+    assert "90 сек" in combined
     assert len(data["sets"]) == 1
 
 
@@ -235,8 +237,13 @@ def test_set_confirmation_transitions_to_next_exercise():
         bot.handle_session_start(data)
     for _ in range(4):  # упражнение 1 = 4 подхода
         result = bot.handle_set_confirmation(data)
-    assert "Следующее упражнение" in result
-    assert "Low Row" in result
+    # На 4-м (последнем) подходе exercise_complete=True -> два сообщения:
+    # план/факт по завершённому упражнению + переход к следующему
+    assert len(result) == 2
+    assert "Vertical Traction" in result[0]  # план/факт отчёт
+    assert "по плану" in result[0]  # все подходы сделаны точно по плану (по умолчанию max)
+    assert "Следующее упражнение" in result[1]
+    assert "Low Row" in result[1]
 
 
 def test_set_confirmation_day_complete_message():
@@ -247,5 +254,23 @@ def test_set_confirmation_day_complete_message():
     total_sets = sum(ex["sets"] for ex in prog.get_day_plan("1")["exercises"])
     for _ in range(total_sets):
         result = bot.handle_set_confirmation(data)
-    assert "завершена" in result.lower()
-    assert "закончил" in result.lower()
+    combined = "\n".join(result).lower()
+    assert "завершена" in combined
+    assert "закончил" in combined
+
+
+def test_set_confirmation_exercise_complete_shows_plan_vs_fact():
+    # Отдельный прямой тест на саму фичу плана/факта (не только косвенно
+    # через transition-тест выше) — проверяет структуру и содержание
+    # первого сообщения при завершении упражнения.
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    for _ in range(4):
+        result = bot.handle_set_confirmation(data)
+    plan_vs_fact = result[0]
+    assert "план: 4 x 8-10, 45-50кг" in plan_vs_fact
+    assert "Подход 1" in plan_vs_fact
+    assert "Подход 4" in plan_vs_fact
+    assert plan_vs_fact.count("\u2705") == 4  # все 4 подхода по плану

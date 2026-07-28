@@ -51,9 +51,10 @@ def test_start_session_idempotent():
 
 def test_end_session_without_start_returns_none():
     data = w.load_workouts()
-    exercises, date = sess.end_session(data)
+    exercises, date, day_id = sess.end_session(data)
     assert exercises is None
     assert date is None
+    assert day_id is None
 
 
 def test_end_session_closes_active_session():
@@ -62,10 +63,24 @@ def test_end_session_closes_active_session():
     session_date = data["active_session"]["date"]
     w.add_set(data, "присед", session_date, 50.0, 8, 1)
 
-    exercises, date = sess.end_session(data)
+    exercises, date, day_id = sess.end_session(data)
     assert exercises == ["присед"]
     assert date == session_date
     assert sess.is_session_active(data) is False
+
+
+def test_end_session_returns_day_id():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    exercises, date, day_id = sess.end_session(data)
+    assert day_id == "1"
+
+
+def test_end_session_day_id_none_when_started_without_program():
+    data = w.load_workouts()
+    sess.start_session(data)  # без day_id — например, день отдыха
+    exercises, date, day_id = sess.end_session(data)
+    assert day_id is None
 
 
 def test_end_session_collects_multiple_exercises():
@@ -75,7 +90,7 @@ def test_end_session_collects_multiple_exercises():
     w.add_set(data, "присед", session_date, 50.0, 8, 1)
     w.add_set(data, "жим лёжа гантели", session_date, 30.0, 10, 1)
 
-    exercises, _ = sess.end_session(data)
+    exercises, _, _ = sess.end_session(data)
     assert exercises == ["жим лёжа гантели", "присед"]  # отсортировано
 
 
@@ -85,7 +100,7 @@ def test_end_session_ignores_sets_from_other_dates():
     sess.start_session(data)
     session_date = data["active_session"]["date"]
 
-    exercises, _ = sess.end_session(data)
+    exercises, _, _ = sess.end_session(data)
     assert exercises == []  # ничего не записано именно в этой сессии
 
 
@@ -128,6 +143,37 @@ def test_report_multiple_exercises():
     report = sess.build_session_report(data, ["жим лёжа гантели", "присед"], "2026-07-28")
     assert "присед" in report
     assert "жим лёжа гантели" in report
+
+
+def test_report_shows_plan_vs_fact_when_day_id_given():
+    data = w.load_workouts()
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.add_set(data, normalized, "2026-07-28", 47.5, 9, 1)
+    report = sess.build_session_report(data, [normalized], "2026-07-28", day_id="1")
+    assert "план:" in report
+    assert "8-10" in report
+    assert "45-50кг" in report
+    assert "\u2705" in report  # 47.5кг/9 повторов — в плане
+
+
+def test_report_no_plan_vs_fact_without_day_id():
+    # Обратная совместимость: без day_id (например, тренировка не по
+    # расписанию) — только тренд, как было раньше, без 'план:'
+    data = w.load_workouts()
+    normalized = w.normalize_exercise_name("Vertical Traction (тяга сверху к груди)", {})
+    w.add_set(data, normalized, "2026-07-28", 47.5, 9, 1)
+    report = sess.build_session_report(data, [normalized], "2026-07-28")
+    assert "план:" not in report
+
+
+def test_report_falls_back_to_trend_when_exercise_not_in_day_plan():
+    # Упражнение записано текстом отдельно (не по плану дня 1) —
+    # plan_ex не найден, отчёт не падает, просто без план/факт секции
+    data = w.load_workouts()
+    w.add_set(data, "совсем другое упражнение", "2026-07-28", 10.0, 5, 1)
+    report = sess.build_session_report(data, ["совсем другое упражнение"], "2026-07-28", day_id="1")
+    assert "совсем другое упражнение" in report
+    assert "план:" not in report
 
 
 # --- _format_trend ---------------------------------------------------

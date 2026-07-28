@@ -251,37 +251,55 @@ def handle_set_confirmation(data):
     session.advance_position с параметрами ИЗ ПЛАНА (не спрашиваем вес
     у Антона каждый раз — он уже задан программой; если Антон делал не
     по плану, он напишет об этом текстом отдельно, не через 'взял').
-    Возвращает текст: подтверждение + таймер отдыха ИЛИ следующее
-    упражнение ИЛИ предложение завершить тренировку."""
+
+    Возвращает СПИСОК текстов (не одну строку): если упражнение только
+    что завершено (exercise_complete=True), первое сообщение — план/факт
+    по всем подходам этого упражнения, второе — переход к следующему
+    упражнению или предложение завершить день. Иначе — один элемент
+    списка с подтверждением текущего подхода."""
     ex, set_num = sess.current_exercise_info(data)
     if ex is None:
-        return "Сейчас нет активной тренировки с планом — напиши «начал», чтобы я предложил план на сегодня."
+        return ["Сейчас нет активной тренировки с планом — напиши «начал», чтобы я предложил план на сегодня."]
 
     weight = ex["weight_max_kg"] if ex["weight_max_kg"] is not None else None
     result = sess.advance_position(data, weight_kg=weight, reps=ex["reps_max"])
 
+    messages = []
+
+    if result["exercise_complete"]:
+        completed = result["completed_exercise"]
+        session = data["active_session"]
+        normalized = w.normalize_exercise_name(completed["name"], data.get("exercise_aliases", {}))
+        actual_sets = [
+            s for s in data.get("sets", [])
+            if s["exercise"] == normalized and s["date"] == session["date"]
+        ]
+        actual_sets.sort(key=lambda s: s["set_number"])
+        messages.append(prog.format_exercise_plan_vs_fact(completed, actual_sets))
+
     if result["day_complete"]:
-        return (
-            f"\u2705 {result['recorded_exercise']} — последний подход дня записан.\n\n"
-            f"Программа на сегодня завершена! Напиши «закончил», когда будешь готов увидеть итоги."
+        messages.append(
+            "\U0001f3c1 Программа на сегодня завершена! Напиши «закончил», когда будешь готов увидеть итоги."
         )
+        return messages
 
     next_ex = result["next_exercise"]
     if result["next_set_number"] == 1 and next_ex["order"] != ex["order"]:
         # перешли на новое упражнение
-        return (
-            f"\u2705 {result['recorded_exercise']} записан.\n"
+        messages.append(
             f"\u23f1 Отдых {result['rest_sec']} сек.\n\n"
             f"Следующее упражнение:\n{prog.format_exercise_line(next_ex)}\n\n"
             f"Когда будешь готов — напиши «взял»."
         )
+        return messages
 
     # тот же подход, следующий номер
-    return (
+    messages.append(
         f"\u2705 Подход {set_num}/{ex['sets']} записан.\n"
         f"\u23f1 Отдых {result['rest_sec']} сек, потом подход {result['next_set_number']}/{ex['sets']}.\n"
         f"Напиши «взял», когда сделаешь."
     )
+    return messages
 
 
 def handle_callback(callback_data, data):
@@ -356,15 +374,16 @@ def main():
             continue
 
         if sess.is_session_end(text):
-            exercises, session_date = sess.end_session(data)
+            exercises, session_date, day_id = sess.end_session(data)
             if exercises is None:
                 outgoing.append(("Тренировка не была начата — нечего завершать.", None, None))
             else:
-                outgoing.append((sess.build_session_report(data, exercises, session_date), None, None))
+                outgoing.append((sess.build_session_report(data, exercises, session_date, day_id), None, None))
             continue
 
         if sess.is_set_confirmation(text):
-            outgoing.append((handle_set_confirmation(data), None, None))
+            for msg_text in handle_set_confirmation(data):
+                outgoing.append((msg_text, None, None))
             continue
 
         results = handle_workout_message(text, data)
