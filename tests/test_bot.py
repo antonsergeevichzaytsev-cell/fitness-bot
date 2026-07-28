@@ -226,7 +226,8 @@ def test_session_start_already_active_after_weight_given():
 
 def test_weight_answer_shows_plan_after_valid_number():
     # ОБНОВЛЕНО: между весом и планом теперь вопрос о самочувствии —
-    # handle_weight_answer больше не показывает план сразу
+    # handle_weight_answer больше не показывает план сразу.
+    # handle_wellness_answer возвращает СПИСОК (разминка + план).
     data = w.load_workouts()
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
@@ -234,9 +235,10 @@ def test_weight_answer_shows_plan_after_valid_number():
     weight_result = bot.handle_weight_answer(data, "121.5")
     assert data["active_session"]["body_weight_kg"] == 121.5
     result = bot.handle_wellness_answer(data, "нормально")
-    assert "День 1" in result
-    assert "Vertical Traction" in result
-    assert "взял" in result
+    combined = "\n".join(result)
+    assert "День 1" in combined
+    assert "Vertical Traction" in combined
+    assert "взял" in combined
 
 
 def test_weight_answer_saves_body_weight():
@@ -408,10 +410,10 @@ def test_confirmed_progression_shows_in_next_session_plan():
         mock_prog_dt.now.return_value = fake_date
         bot.handle_session_start(data)
         bot.handle_weight_answer(data, "121")
-        plan_text = bot.handle_wellness_answer(data, "нормально")
+        plan_messages = bot.handle_wellness_answer(data, "нормально")
 
-    assert "52.5кг" in plan_text
-    assert "45-50кг" not in plan_text
+    assert "52.5кг" in "\n".join(plan_messages)
+    assert "45-50кг" not in "\n".join(plan_messages)
 
 
 # --- handle_extend_rest -------------------------------------------------
@@ -697,14 +699,17 @@ def test_weight_answer_now_asks_wellness_not_plan():
 
 
 def test_wellness_answer_shows_plan():
+    # ОБНОВЛЕНО: handle_wellness_answer теперь возвращает список
+    # (разминка отдельным сообщением + план), не строку
     data = w.load_workouts()
     with mock.patch("program.datetime") as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
         bot.handle_session_start(data)
     bot.handle_weight_answer(data, "121")
     result = bot.handle_wellness_answer(data, "спал 7, стресс 4")
-    assert "День 1" in result
-    assert "Vertical Traction" in result
+    combined = "\n".join(result)
+    assert "День 1" in combined
+    assert "Vertical Traction" in combined
 
 
 def test_wellness_answer_saves_sleep_and_stress():
@@ -725,8 +730,37 @@ def test_wellness_answer_accepts_free_text():
         bot.handle_session_start(data)
     bot.handle_weight_answer(data, "121")
     result = bot.handle_wellness_answer(data, "нормально")
-    assert "День 1" in result  # план всё равно показан, даже без чисел
+    combined = "\n".join(result)
+    assert "День 1" in combined  # план всё равно показан, даже без чисел
     assert sess.is_awaiting_wellness_input(data) is False
+
+
+def test_wellness_answer_shows_warmup_first():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    result = bot.handle_wellness_answer(data, "нормально")
+    assert len(result) == 2
+    assert "Разминка" in result[0]
+    assert "День 1" in result[1]
+
+
+def test_day_complete_shows_cooldown():
+    data = w.load_workouts()
+    data["sets"] = []
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_wellness_answer(data, "нормально")
+    total_sets = sum(ex["sets"] for ex in prog.get_day_plan("1")["exercises"])
+    for _ in range(total_sets):
+        result = bot.handle_set_confirmation(data)
+    combined = "\n".join(result)
+    assert "Заминка" in combined
+    assert "завершена" in combined
 
 
 def test_end_to_end_wellness_shows_in_final_report():

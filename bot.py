@@ -274,22 +274,30 @@ def handle_weight_answer(data, text):
 def handle_wellness_answer(data, text):
     """Обрабатывает ответ на вопрос о сне/стрессе — session.
     parse_wellness_answer гибко извлекает числа (если есть),
-    session.set_wellness сохраняет. После этого показывает план дня +
-    первое упражнение (то, что раньше показывал handle_weight_answer
-    сразу после веса)."""
+    session.set_wellness сохраняет. Возвращает СПИСОК сообщений:
+    разминка (если задана в программе) отдельным сообщением, затем
+    план дня + первое упражнение (то, что раньше показывал
+    handle_weight_answer сразу после веса)."""
     parsed = sess.parse_wellness_answer(text)
     sess.set_wellness(data, parsed["sleep_hours"], parsed["stress_level"], parsed["raw_note"])
 
     session = data["active_session"]
     day_id = session["day_id"]
+
+    messages = []
+    warmup_text = prog.format_warmup()
+    if warmup_text:
+        messages.append(warmup_text)
+
     day_plan = prog.format_day_plan_with_targets(day_id, data)
     ex, set_num = sess.current_exercise_info(data)
     first_exercise = prog.format_exercise_line(ex)
-    return (
+    messages.append(
         f"{day_plan}\n\n"
         f"\U0001f4aa Начинаем с упражнения 1:\n{first_exercise}\n\n"
         f"Сделай подход {set_num}/{ex['sets']} и напиши «взял»."
     )
+    return messages
 
 
 def handle_replace_request(data, reason_text):
@@ -487,6 +495,10 @@ def handle_set_confirmation(data):
             messages.append((suggestion_id, progression.format_suggestion_message(normalized, suggestion)))
 
     if result["day_complete"]:
+        day_id = data["active_session"]["day_id"]
+        cooldown_text = prog.format_cooldown(day_id)
+        if cooldown_text:
+            messages.append(cooldown_text)
         messages.append(
             "\U0001f3c1 Программа на сегодня завершена! Напиши «закончил», когда будешь готов увидеть итоги."
         )
@@ -597,7 +609,8 @@ def main():
             continue
 
         if sess.is_awaiting_wellness_input(data):
-            outgoing.append((handle_wellness_answer(data, text), None, None))
+            for msg_text in handle_wellness_answer(data, text):
+                outgoing.append((msg_text, None, None))
             continue
 
         if sess.is_progress_request(text):

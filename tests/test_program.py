@@ -270,3 +270,39 @@ def test_format_day_plan_with_targets_unknown_day_returns_none():
     data = w.load_workouts()
     assert p.format_day_plan_with_targets("99", data) is None
 
+
+
+# --- format_warmup / format_cooldown --------------------------------
+
+def test_format_warmup_includes_all_steps():
+    warmup_text = p.format_warmup()
+    assert "Разминка" in warmup_text
+    assert "Кардио разогрев" in warmup_text
+    assert "Суставы" in warmup_text
+    assert "Динамика" in warmup_text
+    assert "Подводящий подход" in warmup_text
+
+
+def test_format_warmup_shows_duration_range():
+    warmup_text = p.format_warmup()
+    assert "12-15" in warmup_text
+
+
+def test_format_warmup_none_without_warmup_field():
+    fake_program = {"days": {}}  # без поля 'warmup'
+    assert p.format_warmup(fake_program) is None
+
+
+def test_format_cooldown_returns_day_specific_text():
+    cooldown_text = p.format_cooldown("1")
+    assert "турнике" in cooldown_text  # специфично для дня 1
+
+
+def test_format_cooldown_different_per_day():
+    cd1 = p.format_cooldown("1")
+    cd2 = p.format_cooldown("2")
+    assert cd1 != cd2
+
+
+def test_format_cooldown_none_for_unknown_day():
+    assert p.format_cooldown("99") is None

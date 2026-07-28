@@ -112,6 +112,43 @@ def format_day_plan_with_targets(day_id, workouts_data, program=None):
     return "\n\n".join(lines)
 
 
+def format_warmup(program=None):
+    """Текст разминки перед тренировкой — общая для всех дней (одна
+    и та же 'Заметка 2' из документа программы, 12-15 мин: кардио
+    разогрев -> суставы -> динамика -> подводящий подход).
+    Возвращает None, если warmup не задан в программе (например, для
+    старой версии training_program.json без этого поля)."""
+    if program is None:
+        program = load_program()
+    warmup = program.get("warmup")
+    if not warmup:
+        return None
+
+    dur = warmup.get("duration_min")
+    dur_str = f"{dur[0]}-{dur[1]}" if isinstance(dur, list) else str(dur)
+    lines = [f"\U0001f525 <b>Разминка</b> ({dur_str} мин)\n"]
+    for step in warmup.get("steps", []):
+        step_dur = step.get("duration_min")
+        if isinstance(step_dur, list):
+            step_dur_str = f" ({step_dur[0]}-{step_dur[1]} мин)"
+        elif step_dur is not None:
+            step_dur_str = f" ({step_dur} мин)"
+        else:
+            step_dur_str = ""
+        lines.append(f"<b>{step['part']}</b>{step_dur_str}: {step['description']}")
+    return "\n".join(lines)
+
+
+def format_cooldown(day_id, program=None):
+    """Текст заминки для конкретного дня (у каждого дня своя, в отличие
+    от разминки). Возвращает None, если у дня нет cooldown или день не
+    найден."""
+    day = get_day_plan(day_id, program)
+    if not day or not day.get("cooldown"):
+        return None
+    return f"\U0001f9ca <b>Заминка</b>: {day['cooldown']}"
+
+
 def _set_status(ex, actual_weight_kg, actual_reps):
     """Сравнивает один фактический подход с диапазоном плана, возвращает
     (эмодзи, текст) статуса. Вес null в плане ('по ощущению') не
