@@ -14,7 +14,7 @@ def test_load_workouts_missing_file_returns_empty_schema(tmp_path, monkeypatch):
     monkeypatch.setattr(w, "WORKOUTS_PATH", str(fake_path))
     data = w.load_workouts()
     assert data == {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                     "pending_suggestions": [], "targets": {}, "wellness_log": {}}
+                     "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {}}
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -331,3 +331,44 @@ def test_load_workouts_missing_wellness_log_key_does_not_crash():
     # старого файла без wellness_log
     data.setdefault("wellness_log", {})
     assert w.get_wellness_for_date(data, "2026-07-28") is None
+
+
+# --- add_cardio / get_cardio_for_date --------------------------------
+
+def test_get_cardio_empty_for_no_records():
+    data = w.load_workouts()
+    result = w.get_cardio_for_date(data, "2026-07-28")
+    assert result == {"entries": [], "total_km": 0}
+
+
+def test_add_cardio_single_entry():
+    data = w.load_workouts()
+    w.add_cardio(data, "2026-07-28", 5.0)
+    result = w.get_cardio_for_date(data, "2026-07-28")
+    assert result["total_km"] == 5.0
+    assert len(result["entries"]) == 1
+
+
+def test_add_cardio_multiple_entries_same_date_sum():
+    # До и после тренировки — две отдельные команды, суммируются
+    data = w.load_workouts()
+    w.add_cardio(data, "2026-07-28", 6.0)
+    w.add_cardio(data, "2026-07-28", 9.0)
+    result = w.get_cardio_for_date(data, "2026-07-28")
+    assert result["total_km"] == 15.0
+    assert len(result["entries"]) == 2
+
+
+def test_add_cardio_different_dates_independent():
+    data = w.load_workouts()
+    w.add_cardio(data, "2026-07-20", 5.0)
+    w.add_cardio(data, "2026-07-27", 8.0)
+    assert w.get_cardio_for_date(data, "2026-07-20")["total_km"] == 5.0
+    assert w.get_cardio_for_date(data, "2026-07-27")["total_km"] == 8.0
+
+
+def test_load_workouts_missing_cardio_log_key_does_not_crash():
+    data = {"schema_version": 1, "sets": [], "exercise_aliases": {},
+            "pending_suggestions": [], "targets": {}, "wellness_log": {}}
+    data.setdefault("cardio_log", {})
+    assert w.get_cardio_for_date(data, "2026-07-28") == {"entries": [], "total_km": 0}

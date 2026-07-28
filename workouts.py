@@ -15,10 +15,11 @@ WORKOUTS_PATH = os.path.join(ROOT, "workouts.json")
 def load_workouts():
     if not os.path.exists(WORKOUTS_PATH):
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                "pending_suggestions": [], "targets": {}, "wellness_log": {}}
+                "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
         data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
+        data.setdefault("cardio_log", {})
         return data
 
 
@@ -123,6 +124,26 @@ def get_wellness_for_date(data, date):
     всё равно вызывается с обоими None, что отличается от отсутствия
     записи вообще: 'заполнил, но не дал числа' vs 'не заполнял'."""
     return data.get("wellness_log", {}).get(date)
+
+
+def add_cardio(data, date, km, ts=None):
+    """Добавляет запись кардио на дату — СПИСОК (не одно значение),
+    потому что кардио в программе логируется дважды за тренировку
+    (5-7 км до, 8-10 км после, см. training_program.json['cardio']).
+    Каждая команда 'кардио 5км' добавляет отдельную запись, не
+    перезаписывает предыдущую за этот же день."""
+    if ts is None:
+        ts = datetime.now(timezone.utc).isoformat()
+    data.setdefault("cardio_log", {}).setdefault(date, []).append({"km": km, "ts": ts})
+
+
+def get_cardio_for_date(data, date):
+    """Возвращает список записей кардио за дату ([] если ничего не
+    записано), и их суммарный километраж отдельным полем для удобства
+    вызывающего кода. Формат: {"entries": [...], "total_km": float}."""
+    entries = data.get("cardio_log", {}).get(date, [])
+    total_km = sum(e["km"] for e in entries)
+    return {"entries": entries, "total_km": round(total_km, 1)}
 
 
 def format_progress_report(data, exercise, limit_sessions=10):

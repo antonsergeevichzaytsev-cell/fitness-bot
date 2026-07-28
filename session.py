@@ -25,6 +25,7 @@ REPLACE_KEYWORDS = ["замени", "заменить", "занят", "не ра
 SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делать", "скип"]
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
+CARDIO_KEYWORD = "кардио"
 
 
 def is_session_start(text):
@@ -122,6 +123,29 @@ def is_progress_request(text):
     тренда по конкретному упражнению за несколько тренировок."""
     t = text.strip().lower()
     return any(kw in t for kw in PROGRESS_KEYWORDS)
+
+
+def is_cardio_message(text):
+    """'кардио 5км', 'кардио 5' — отдельная команда записи кардио, не
+    привязана к пошаговому флоу тренировки, работает в любой момент."""
+    t = text.strip().lower()
+    return CARDIO_KEYWORD in t
+
+
+def extract_cardio_km(text):
+    """Извлекает километраж из 'кардио 5км' / 'кардио 5.5' / 'кардио
+    5 км'. Возвращает float или None, если число не найдено (текст
+    после 'кардио' пустой или не число — вызывающий код должен
+    переспросить)."""
+    t = text.strip().lower()
+    idx = t.find(CARDIO_KEYWORD)
+    if idx == -1:
+        return None
+    rest = t[idx + len(CARDIO_KEYWORD):]
+    match = re.search(r"(\d+(?:[.,]\d+)?)", rest)
+    if not match:
+        return None
+    return float(match.group(1).replace(",", "."))
 
 
 def extract_progress_query(text):
@@ -672,6 +696,9 @@ def build_session_report(data, exercises, session_date, day_id=None,
         lines.append(summary)
 
     totals = [f"\U0001f4ca <b>Итого тоннаж:</b> {round(total_tonnage)} кг"]
+    cardio = w.get_cardio_for_date(data, session_date)
+    if cardio["total_km"] > 0:
+        totals.append(f"\U0001f6b4 <b>Кардио:</b> {cardio['total_km']} км")
     calories = cal.estimate_calories(body_weight_kg, duration_minutes)
     if calories is not None:
         totals.append(f"\U0001f525 <b>Оценка калорий:</b> ~{calories} ккал "

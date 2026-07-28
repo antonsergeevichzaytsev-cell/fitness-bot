@@ -966,3 +966,48 @@ def test_end_session_does_not_log_when_no_wellness_given():
     session_date = data["active_session"]["date"]
     sess.end_session(data)
     assert w.get_wellness_for_date(data, session_date) is None
+
+
+# --- is_cardio_message / extract_cardio_km --------------------------
+
+def test_is_cardio_message_true():
+    assert sess.is_cardio_message("кардио 5км") is True
+
+
+def test_is_cardio_message_false_for_other_text():
+    assert sess.is_cardio_message("присед 50 на 8") is False
+
+
+def test_extract_cardio_km_with_unit():
+    assert sess.extract_cardio_km("кардио 5км") == 5.0
+
+
+def test_extract_cardio_km_no_unit():
+    assert sess.extract_cardio_km("кардио 5") == 5.0
+
+
+def test_extract_cardio_km_decimal_with_comma():
+    assert sess.extract_cardio_km("кардио 5,5 км") == 5.5
+
+
+def test_extract_cardio_km_no_number_returns_none():
+    assert sess.extract_cardio_km("кардио") is None
+
+
+# --- build_session_report: кардио ------------------------------------
+
+def test_report_shows_cardio_when_logged():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    w.add_cardio(data, "2026-07-28", 6.0)
+    w.add_cardio(data, "2026-07-28", 9.0)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28")
+    assert "Кардио" in report
+    assert "15.0 км" in report
+
+
+def test_report_no_cardio_section_when_not_logged():
+    data = w.load_workouts()
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    report = sess.build_session_report(data, ["присед"], "2026-07-28")
+    assert "Кардио" not in report

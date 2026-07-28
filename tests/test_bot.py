@@ -805,3 +805,27 @@ def test_handle_workout_message_blocks_none_of_multiple_sets_if_one_suspicious()
     with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
         bot.handle_workout_message("тяга 47.5 на 9, потом 500 на 9", data)
     assert data["sets"] == []
+
+
+# --- handle_cardio -----------------------------------------------------
+
+def test_handle_cardio_records_and_confirms():
+    data = w.load_workouts()
+    data["cardio_log"] = {}
+    result = bot.handle_cardio(data, "кардио 6км")
+    assert "6.0" in result
+    assert "Записал кардио" in result
+
+
+def test_handle_cardio_sums_multiple_entries_same_day():
+    data = w.load_workouts()
+    data["cardio_log"] = {}
+    bot.handle_cardio(data, "кардио 6км")
+    result = bot.handle_cardio(data, "кардио 9км")
+    assert "15.0" in result  # сумма за день
+
+
+def test_handle_cardio_no_number_asks_to_clarify():
+    data = w.load_workouts()
+    result = bot.handle_cardio(data, "кардио")
+    assert "не понял" in result.lower()

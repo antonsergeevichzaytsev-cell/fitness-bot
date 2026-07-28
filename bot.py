@@ -380,6 +380,21 @@ def handle_undo(data):
     return f"Отменил: {undone['exercise']} — {weight_str} \u00d7 {undone['reps']} (подход {undone['set_number']})."
 
 
+def handle_cardio(data, text):
+    """Обрабатывает 'кардио 5км' — отдельная команда, не привязана к
+    пошаговому флоу тренировки, работает в любой момент разговора.
+    Записывает под сегодняшней датой (не датой активной сессии, если
+    она есть — кардио может быть до/после/вне тренировки вообще)."""
+    km = sess.extract_cardio_km(text)
+    if km is None:
+        return "Не понял километраж — напиши, например, «кардио 5км»."
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    w.add_cardio(data, today, km)
+    total = w.get_cardio_for_date(data, today)
+    return f"\U0001f6b4 Записал кардио: {km}км. Сегодня всего: {total['total_km']}км."
+
+
 def handle_progress_request(data, text):
     """Обрабатывает 'покажи прогресс по X' — извлекает название через
     session.extract_progress_query, находит упражнение через
@@ -622,6 +637,10 @@ def main():
 
         if sess.is_undo_request(text):
             outgoing.append((handle_undo(data), None, None))
+            continue
+
+        if sess.is_cardio_message(text):
+            outgoing.append((handle_cardio(data, text), None, None))
             continue
 
         if sess.is_extend_rest_request(text):
