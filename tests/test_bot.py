@@ -7,6 +7,7 @@
 """
 import os
 import sys
+from datetime import datetime, timezone
 from unittest import mock
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
@@ -15,6 +16,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 
 sys.path.insert(0, "..")
 import bot
+import program as prog
 import workouts as w
 
 
@@ -177,3 +179,73 @@ def test_callback_ignores_non_matching_format():
     assert bot.handle_callback("something:else", data) is None
     assert bot.handle_callback("sugg:onlytwo", data) is None
     assert bot.handle_callback("", data) is None
+
+
+# --- handle_session_start / handle_set_confirmation ------------------
+# Пошаговый флоу: "начал" -> план на день -> "взял" x N -> "закончил".
+
+def test_session_start_rest_day_no_program():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 28, tzinfo=timezone.utc)  # вторник, отдых
+        result = bot.handle_session_start(data)
+    assert "отдых" in result.lower()
+
+
+def test_session_start_training_day_shows_plan_and_first_exercise():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)  # понедельник
+        result = bot.handle_session_start(data)
+    assert "День 1" in result
+    assert "Vertical Traction" in result
+    assert "взял" in result
+
+
+def test_session_start_already_active_reports_current_position():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+        result = bot.handle_session_start(data)  # повторный "начал"
+    assert "уже идёт" in result.lower()
+
+
+def test_set_confirmation_without_active_session():
+    data = w.load_workouts()
+    result = bot.handle_set_confirmation(data)
+    assert "нет активной тренировки" in result.lower()
+
+
+def test_set_confirmation_records_and_shows_rest_timer():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    result = bot.handle_set_confirmation(data)
+    assert "Подход 1/4" in result
+    assert "90 сек" in result
+    assert len(data["sets"]) == 1
+
+
+def test_set_confirmation_transitions_to_next_exercise():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    for _ in range(4):  # упражнение 1 = 4 подхода
+        result = bot.handle_set_confirmation(data)
+    assert "Следующее упражнение" in result
+    assert "Low Row" in result
+
+
+def test_set_confirmation_day_complete_message():
+    data = w.load_workouts()
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    total_sets = sum(ex["sets"] for ex in prog.get_day_plan("1")["exercises"])
+    for _ in range(total_sets):
+        result = bot.handle_set_confirmation(data)
+    assert "завершена" in result.lower()
+    assert "закончил" in result.lower()

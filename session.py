@@ -12,10 +12,12 @@ Session state хранится в workouts.json (data['active_session']) — н�
 """
 from datetime import datetime, timezone
 
+import program as prog
 import workouts as w
 
 START_KEYWORDS = ["начал", "начинаю", "старт", "погнали", "поехали тренир"]
 END_KEYWORDS = ["закончил", "конец тренировки", "финиш", "всё, закончили", "готово с тренировкой"]
+SET_DONE_KEYWORDS = ["взял", "готово", "сделал", "есть"]
 
 
 def is_session_start(text):
@@ -28,17 +30,117 @@ def is_session_end(text):
     return any(kw in t for kw in END_KEYWORDS)
 
 
-def start_session(data):
-    """Открывает сессию — запоминает момент старта и дату. Идемпотентно:
-    повторный вызов при уже открытой сессии не создаёт вторую, просто
-    ничего не делает (защита от случайного повторного 'начал')."""
+def is_set_confirmation(text):
+    """Короткое подтверждение 'подход сделан' в пошаговом флоу — 'взял',
+    'готово', 'сделал', 'есть'. Ограничение по длине (<=4 слова) намеренно:
+    без него 'сделал присед 50 на 8, тяжело пошёл' тоже совпало бы (там
+    есть слово 'сделал'), но это полноценная запись подхода с деталями,
+    не короткое 'продолжай' — их нельзя путать, у них разная обработка."""
+    t = text.strip().lower()
+    if len(t.split()) > 4:
+        return False
+    return any(kw in t for kw in SET_DONE_KEYWORDS)
+
+
+def start_session(data, day_id=None):
+    """Открывает сессию — запоминает момент старта, дату, день программы
+    (по расписанию через program.today_day_id(), если day_id не передан
+    явно) и позицию для пошагового флоу (первое упражнение, первый
+    подход). Идемпотентно: повторный вызов при уже открытой сессии не
+    создаёт вторую, просто ничего не делает.
+
+    day_id можно передать явно (например, если сегодня день отдыха по
+    расписанию, но Антон всё равно хочет потренироваться на замену) —
+    вызывающий код в bot.py решает, спрашивать ли об этом."""
     if data.get("active_session"):
         return False  # уже открыта
     data["active_session"] = {
         "started_ts": datetime.now(timezone.utc).isoformat(),
         "date": datetime.now(timezone.utc).date().isoformat(),
+        "day_id": day_id,
+        "current_exercise_order": 1 if day_id else None,
+        "current_set_number": 1 if day_id else None,
+        "resting_until": None,
     }
     return True
+
+
+def current_exercise_info(data):
+    """Возвращает (exercise_dict, set_number) для текущей позиции
+    активной сессии, или (None, None) если сессия не активна, день не
+    определён, или упражнения в дне кончились (день пройден)."""
+    session = data.get("active_session")
+    if not session or not session.get("day_id"):
+        return None, None
+    order = session.get("current_exercise_order")
+    if order is None:
+        return None, None
+    ex = prog.get_exercise(session["day_id"], order)
+    if not ex:
+        return None, None  # order вышел за пределы дня — упражнения кончились
+    return ex, session.get("current_set_number", 1)
+
+
+def advance_position(data, weight_kg, reps, rpe=None, note=""):
+    """Записывает выполненный сет текущего упражнения через
+    workouts.add_set, продвигает позицию сессии на следующий подход
+    или следующее упражнение.
+
+    Возвращает dict с ключами:
+        "recorded_exercise": имя записанного упражнения (или None,
+            если сессия/позиция невалидна — ничего не записано)
+        "day_complete": True, если это был последний сет последнего
+            упражнения дня — вызывающий код может предложить сразу
+            завершить сессию
+        "next_exercise": следующее упражнение (dict) или None, если
+            день завершён
+        "next_set_number": номер следующего подхода в next_exercise,
+            актуален только если next_exercise задан и это ТО ЖЕ
+            упражнение (не первый подход нового)
+        "rest_sec": сколько отдыхать после записанного сета — берётся
+            из ТОЛЬКО ЧТО записанного упражнения (rest после ЭТОГО
+            подхода), не следующего
+    """
+    ex, set_number = current_exercise_info(data)
+    if ex is None:
+        return {"recorded_exercise": None, "day_complete": False,
+                "next_exercise": None, "next_set_number": None, "rest_sec": None}
+
+    session = data["active_session"]
+    day_id = session["day_id"]
+
+    w.add_set(data, ex["name"], session["date"], weight_kg, reps,
+              set_number, rpe=rpe, note=note)
+
+    rest_sec = ex["rest_sec"]
+
+    if set_number < ex["sets"]:
+        # ещё есть подходы в этом же упражнении
+        session["current_set_number"] = set_number + 1
+        return {
+            "recorded_exercise": ex["name"], "day_complete": False,
+            "next_exercise": ex, "next_set_number": set_number + 1,
+            "rest_sec": rest_sec,
+        }
+
+    # подходы этого упражнения закончились — следующее упражнение в дне
+    next_order = ex["order"] + 1
+    next_ex = prog.get_exercise(day_id, next_order)
+    if next_ex is None:
+        # это было последнее упражнение дня
+        return {
+            "recorded_exercise": ex["name"], "day_complete": True,
+            "next_exercise": None, "next_set_number": None,
+            "rest_sec": rest_sec,
+        }
+
+    session["current_exercise_order"] = next_order
+    session["current_set_number"] = 1
+    return {
+        "recorded_exercise": ex["name"], "day_complete": False,
+        "next_exercise": next_ex, "next_set_number": 1,
+        "rest_sec": rest_sec,
+    }
 
 
 def end_session(data):

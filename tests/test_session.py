@@ -4,6 +4,7 @@
 import sys
 
 sys.path.insert(0, "..")
+import program as prog
 import session as sess
 import workouts as w
 
@@ -158,3 +159,113 @@ def test_format_trend_first_time_with_weight():
     prior = [{"weight_kg": None, "reps": 8}]  # прошлый раз был без веса
     result = sess._format_trend(today, prior)
     assert "первая тренировка с весом" in result
+
+
+# --- is_set_confirmation ---------------------------------------------
+
+def test_set_confirmation_matches_short_phrases():
+    for text in ["взял", "готово", "сделал", "есть"]:
+        assert sess.is_set_confirmation(text) is True, f"failed on {text!r}"
+
+
+def test_set_confirmation_false_for_long_workout_log():
+    # 'сделал' встречается, но это полноценная запись подхода с деталями
+    # (вес/повторы/заметка) — не короткое подтверждение, разная обработка
+    assert sess.is_set_confirmation("сделал присед 50 на 8, тяжело пошёл") is False
+
+
+def test_set_confirmation_false_unrelated_text():
+    assert sess.is_set_confirmation("жим лежа 30 на 10") is False
+
+
+def test_set_confirmation_case_insensitive():
+    assert sess.is_set_confirmation("ВЗЯЛ") is True
+
+
+# --- current_exercise_info -----------------------------------------------
+
+def test_current_exercise_info_no_active_session():
+    data = w.load_workouts()
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex is None and set_num is None
+
+
+def test_current_exercise_info_session_without_day_id():
+    data = w.load_workouts()
+    sess.start_session(data)  # без day_id (например, начал в день отдыха)
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex is None and set_num is None
+
+
+def test_current_exercise_info_returns_first_exercise():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex["name"] == "Vertical Traction (тяга сверху к груди)"
+    assert set_num == 1
+
+
+def test_current_exercise_info_none_after_day_exhausted():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    session = data["active_session"]
+    session["current_exercise_order"] = 999  # искусственно за пределами дня
+    ex, set_num = sess.current_exercise_info(data)
+    assert ex is None and set_num is None
+
+
+# --- advance_position -----------------------------------------------------
+
+def test_advance_position_no_active_session_records_nothing():
+    data = w.load_workouts()
+    result = sess.advance_position(data, weight_kg=30.0, reps=10)
+    assert result["recorded_exercise"] is None
+    assert data["sets"] == []
+
+
+def test_advance_position_records_set_and_stays_on_same_exercise():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")  # упражнение 1: 4 подхода
+    result = sess.advance_position(data, weight_kg=47.5, reps=10)
+    assert result["recorded_exercise"] == "Vertical Traction (тяга сверху к груди)"
+    assert result["day_complete"] is False
+    assert result["next_set_number"] == 2
+    assert len(data["sets"]) == 1
+    assert data["sets"][0]["weight_kg"] == 47.5
+
+
+def test_advance_position_moves_to_next_exercise_after_last_set():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    for _ in range(4):  # упражнение 1 имеет ровно 4 подхода
+        result = sess.advance_position(data, weight_kg=47.5, reps=10)
+    assert result["next_exercise"]["name"] == "Low Row нейтральным хватом"
+    assert result["next_set_number"] == 1
+    assert result["day_complete"] is False
+
+
+def test_advance_position_day_complete_on_very_last_set():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    total_sets = sum(ex["sets"] for ex in prog.get_day_plan("1")["exercises"])
+    for _ in range(total_sets):
+        result = sess.advance_position(data, weight_kg=30.0, reps=10)
+    assert result["day_complete"] is True
+    assert result["next_exercise"] is None
+    assert len(data["sets"]) == total_sets
+
+
+def test_advance_position_uses_rest_sec_from_recorded_exercise():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")  # упражнение 1: rest_sec=90
+    result = sess.advance_position(data, weight_kg=47.5, reps=10)
+    assert result["rest_sec"] == 90
+
+
+def test_advance_position_passes_rpe_and_note_through():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10, rpe=8, note="тяжело")
+    assert data["sets"][0]["rpe"] == 8
+    assert data["sets"][0]["note"] == "тяжело"
+

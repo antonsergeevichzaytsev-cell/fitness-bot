@@ -57,6 +57,7 @@ from datetime import datetime, timezone
 
 import net
 import parser
+import program as prog
 import progression
 import safety
 import session as sess
@@ -214,6 +215,75 @@ def handle_workout_message(text, data):
     return messages
 
 
+def handle_session_start(data):
+    """Обрабатывает 'начал' — определяет день программы по расписанию
+    (program.today_day_id, детерминированно, не DeepSeek), открывает
+    сессию с этим днём, возвращает текст плана + первого упражнения.
+
+    Если сегодня день отдыха по расписанию — сессия НЕ открывается с
+    day_id (программы нет, current_exercise_order будет None, весь
+    пошаговый флоу не сработает бы) — вместо этого честно сообщаем,
+    что сегодня отдых, не притворяемся, что есть план."""
+    day_id = prog.today_day_id()
+
+    if day_id is None:
+        return "Сегодня по расписанию день отдыха. Если всё равно хочешь потренироваться — напиши мне подходы обычным текстом, я запишу без плана."
+
+    started = sess.start_session(data, day_id=day_id)
+    if not started:
+        ex, set_num = sess.current_exercise_info(data)
+        if ex:
+            return f"Тренировка уже идёт. Сейчас: {prog.format_exercise_line(ex)}\nПодход {set_num}/{ex['sets']}."
+        return "Тренировка уже идёт — просто пиши подходы."
+
+    day_plan = prog.format_day_plan(day_id)
+    ex, set_num = sess.current_exercise_info(data)
+    first_exercise = prog.format_exercise_line(ex)
+    return (
+        f"{day_plan}\n\n"
+        f"\U0001f4aa Начинаем с упражнения 1:\n{first_exercise}\n\n"
+        f"Сделай подход {set_num}/{ex['sets']} и напиши «взял»."
+    )
+
+
+def handle_set_confirmation(data):
+    """Обрабатывает 'взял' — записывает текущий подход через
+    session.advance_position с параметрами ИЗ ПЛАНА (не спрашиваем вес
+    у Антона каждый раз — он уже задан программой; если Антон делал не
+    по плану, он напишет об этом текстом отдельно, не через 'взял').
+    Возвращает текст: подтверждение + таймер отдыха ИЛИ следующее
+    упражнение ИЛИ предложение завершить тренировку."""
+    ex, set_num = sess.current_exercise_info(data)
+    if ex is None:
+        return "Сейчас нет активной тренировки с планом — напиши «начал», чтобы я предложил план на сегодня."
+
+    weight = ex["weight_max_kg"] if ex["weight_max_kg"] is not None else None
+    result = sess.advance_position(data, weight_kg=weight, reps=ex["reps_max"])
+
+    if result["day_complete"]:
+        return (
+            f"\u2705 {result['recorded_exercise']} — последний подход дня записан.\n\n"
+            f"Программа на сегодня завершена! Напиши «закончил», когда будешь готов увидеть итоги."
+        )
+
+    next_ex = result["next_exercise"]
+    if result["next_set_number"] == 1 and next_ex["order"] != ex["order"]:
+        # перешли на новое упражнение
+        return (
+            f"\u2705 {result['recorded_exercise']} записан.\n"
+            f"\u23f1 Отдых {result['rest_sec']} сек.\n\n"
+            f"Следующее упражнение:\n{prog.format_exercise_line(next_ex)}\n\n"
+            f"Когда будешь готов — напиши «взял»."
+        )
+
+    # тот же подход, следующий номер
+    return (
+        f"\u2705 Подход {set_num}/{ex['sets']} записан.\n"
+        f"\u23f1 Отдых {result['rest_sec']} сек, потом подход {result['next_set_number']}/{ex['sets']}.\n"
+        f"Напиши «взял», когда сделаешь."
+    )
+
+
 def handle_callback(callback_data, data):
     """Обрабатывает нажатие кнопки подтверждения/отклонения предложения.
     Возвращает текст для answerCallbackQuery (короткое всплывающее
@@ -282,12 +352,7 @@ def main():
             continue
 
         if sess.is_session_start(text):
-            started = sess.start_session(data)
-            outgoing.append((
-                "\U0001f4aa Тренировка начата, поехали!" if started
-                else "Тренировка уже идёт — просто пиши подходы.",
-                None, None,
-            ))
+            outgoing.append((handle_session_start(data), None, None))
             continue
 
         if sess.is_session_end(text):
@@ -296,6 +361,10 @@ def main():
                 outgoing.append(("Тренировка не была начата — нечего завершать.", None, None))
             else:
                 outgoing.append((sess.build_session_report(data, exercises, session_date), None, None))
+            continue
+
+        if sess.is_set_confirmation(text):
+            outgoing.append((handle_set_confirmation(data), None, None))
             continue
 
         results = handle_workout_message(text, data)
