@@ -1,0 +1,82 @@
+{
+  "_comment": "Источник: Anton_Training_Program.docx (версия июнь 2026, загружен 28.07.2026). Расписание недели: Пн=День 1, Ср=День 2, Пт=День 3, Сб=День 4, Вт/Чт/Вс=отдых. weight_min_kg/weight_max_kg=null означает 'по ощущению' в оригинале — вес подбирается на месте, не фиксирован программой. per_side=true означает счёт подходов на каждую сторону отдельно (не путать с обычным двусторонним упражнением).",
+
+  "cardio": {
+    "before_workout_km": [5, 7],
+    "after_workout_km": [8, 10],
+    "total_km_per_session": 15,
+    "weekly_km": 60
+  },
+
+  "days": {
+    "1": {
+      "name": "Спина + Задняя дельта + Бицепс",
+      "weekday": "monday",
+      "duration_min": [60, 75],
+      "notes": "",
+      "exercises": [
+        {"order": 1, "name": "Vertical Traction (тяга сверху к груди)", "machine": "Selection Vertical Traction", "sets": 4, "reps_min": 8, "reps_max": 10, "weight_min_kg": 45, "weight_max_kg": 50, "tempo": "2-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 2, "name": "Low Row нейтральным хватом", "machine": "Hammer Iso-Row", "sets": 4, "reps_min": 10, "reps_max": 12, "weight_min_kg": 65, "weight_max_kg": 70, "tempo": "2-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 3, "name": "Single-arm DB Row (гантель одной рукой)", "machine": "Скамья + гантель", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": 20, "weight_max_kg": 22, "tempo": "2-1-1-1", "rest_sec": 60, "per_side": false},
+        {"order": 4, "name": "Lat Pulldown широким хватом", "machine": "Selection Pulldown", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": 40, "weight_max_kg": 45, "tempo": "2-0-2-0", "rest_sec": 75, "per_side": false},
+        {"order": 5, "name": "Reverse Pec Deck (задняя дельта)", "machine": "Rear Delt Machine", "sets": 3, "reps_min": 12, "reps_max": 15, "weight_min_kg": 30, "weight_max_kg": 35, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 6, "name": "Biceps Curl Machine", "machine": "Selection Arm Curl", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": 25, "weight_max_kg": 30, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 7, "name": "Hammer Curl (молотки)", "machine": "Гантели стоя", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": 12, "weight_max_kg": 12, "tempo": "2-0-2-0", "rest_sec": 60, "per_side": false},
+        {"order": 8, "name": "Hyperextension с весом", "machine": "Hyperextension + диск", "sets": 3, "reps_min": 12, "reps_max": 15, "weight_min_kg": 15, "weight_max_kg": 20, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false}
+      ],
+      "cooldown": "велик 8-10 км на ЧСС 120-135, вис на турнике 30 сек x2, растяжка широчайших с резинкой 30 сек на руку"
+    },
+    "2": {
+      "name": "Грудь + Плечи + Трицепс",
+      "weekday": "wednesday",
+      "duration_min": [60, 75],
+      "notes": "без жима штанги от груди",
+      "exercises": [
+        {"order": 1, "name": "Incline DB Press (наклонный жим 30°)", "machine": "Скамья + гантели", "sets": 4, "reps_min": 8, "reps_max": 10, "weight_min_kg": 20, "weight_max_kg": 22, "tempo": "3-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 2, "name": "Hammer Iso-Lateral Chest Press", "machine": "Hammer Iso-Lateral", "sets": 4, "reps_min": 10, "reps_max": 12, "weight_min_kg": null, "weight_max_kg": null, "tempo": "2-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 3, "name": "Pec Deck (бабочка)", "machine": "Pectoral Machine", "sets": 3, "reps_min": 12, "reps_max": 15, "weight_min_kg": 35, "weight_max_kg": 45, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 4, "name": "Shoulder Press DB (жим сидя)", "machine": "Скамья + гантели", "sets": 4, "reps_min": 8, "reps_max": 10, "weight_min_kg": 15, "weight_max_kg": 17, "tempo": "2-0-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 5, "name": "Lateral Raise (махи в стороны)", "machine": "Гантели стоя", "sets": 4, "reps_min": 12, "reps_max": 15, "weight_min_kg": 10, "weight_max_kg": 10, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 6, "name": "Triceps Rope Pushdown (с канатом)", "machine": "Кроссовер + канат", "sets": 4, "reps_min": 10, "reps_max": 12, "weight_min_kg": 22, "weight_max_kg": 25, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 7, "name": "Overhead Triceps Extension (фр. жим сидя)", "machine": "Скамья + гантель", "sets": 3, "reps_min": 12, "reps_max": 12, "weight_min_kg": 12, "weight_max_kg": 15, "tempo": "3-1-2-0", "rest_sec": 60, "per_side": false}
+      ],
+      "cooldown": "велик 8-10 км, растяжка груди в дверном проёме 30 сек x2, растяжка плеча рукой поперёк груди 30 сек на сторону"
+    },
+    "3": {
+      "name": "Спина (объём) + Бицепс + Кор",
+      "weekday": "friday",
+      "duration_min": [60, 75],
+      "notes": "",
+      "exercises": [
+        {"order": 1, "name": "High Row (тяга к верху груди)", "machine": "Hammer High Row", "sets": 4, "reps_min": 10, "reps_max": 12, "weight_min_kg": 45, "weight_max_kg": 55, "tempo": "2-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 2, "name": "Single-arm Cable Row (одной рукой)", "machine": "Кроссовер", "sets": 4, "reps_min": 10, "reps_max": 10, "weight_min_kg": 15, "weight_max_kg": 20, "tempo": "2-1-1-1", "rest_sec": 75, "per_side": true},
+        {"order": 3, "name": "Straight-arm Pulldown (прямыми руками)", "machine": "Кроссовер", "sets": 3, "reps_min": 12, "reps_max": 12, "weight_min_kg": 15, "weight_max_kg": 20, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 4, "name": "Face Pull (тяга к лицу с канатом)", "machine": "Кроссовер + канат", "sets": 3, "reps_min": 15, "reps_max": 15, "weight_min_kg": 15, "weight_max_kg": 18, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 5, "name": "Preacher Curl (скамья Скотта)", "machine": "Preacher Curl", "sets": 3, "reps_min": 12, "reps_max": 12, "weight_min_kg": 20, "weight_max_kg": 25, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 6, "name": "Cable Curl (с нижнего блока)", "machine": "Кроссовер", "sets": 3, "reps_min": 15, "reps_max": 15, "weight_min_kg": 15, "weight_max_kg": 20, "tempo": "2-0-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 7, "name": "Cable Crunch (скручивания на блоке)", "machine": "Кроссовер + канат", "sets": 3, "reps_min": 15, "reps_max": 20, "weight_min_kg": 20, "weight_max_kg": 25, "tempo": "2-1-2-1", "rest_sec": 45, "per_side": false},
+        {"order": 8, "name": "Pallof Press (антиротация)", "machine": "Кроссовер", "sets": 3, "reps_min": 12, "reps_max": 12, "weight_min_kg": 10, "weight_max_kg": 15, "tempo": "2-1-2-1", "rest_sec": 45, "per_side": true}
+      ],
+      "cooldown": "велик 8-10 км, поза ребёнка 60 сек, скрутка лёжа 30 сек x сторона"
+    },
+    "4": {
+      "name": "Грудь (объём) + Плечи + Трицепс",
+      "weekday": "saturday",
+      "duration_min": [60, 75],
+      "notes": "",
+      "exercises": [
+        {"order": 1, "name": "Flat DB Press (жим лёжа горизонтально)", "machine": "Скамья + гантели", "sets": 4, "reps_min": 10, "reps_max": 12, "weight_min_kg": 17, "weight_max_kg": 20, "tempo": "3-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 2, "name": "Incline DB Press (угол 45°)", "machine": "Скамья + гантели", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": 17, "weight_max_kg": 20, "tempo": "3-1-2-0", "rest_sec": 90, "per_side": false},
+        {"order": 3, "name": "Cable Crossover сверху-вниз", "machine": "Кроссовер", "sets": 3, "reps_min": 12, "reps_max": 15, "weight_min_kg": 12, "weight_max_kg": 15, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 4, "name": "Assisted Dips (брусья с противовесом)", "machine": "Assisted Dip Machine", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": null, "weight_max_kg": null, "tempo": "2-1-2-0", "rest_sec": 75, "per_side": false},
+        {"order": 5, "name": "Rear Delt Fly (обратные разводки)", "machine": "Rear Delt / гантели", "sets": 3, "reps_min": 12, "reps_max": 15, "weight_min_kg": 8, "weight_max_kg": 10, "tempo": "2-1-2-1", "rest_sec": 60, "per_side": false},
+        {"order": 6, "name": "Cable Lateral Raise (нижний блок)", "machine": "Кроссовер", "sets": 3, "reps_min": 15, "reps_max": 15, "weight_min_kg": 5, "weight_max_kg": 7, "tempo": "2-0-2-1", "rest_sec": 45, "per_side": true},
+        {"order": 7, "name": "Close-grip Chest Press (узкий жим)", "machine": "Chest Press Machine", "sets": 3, "reps_min": 10, "reps_max": 12, "weight_min_kg": null, "weight_max_kg": null, "tempo": "2-1-2-0", "rest_sec": 60, "per_side": false},
+        {"order": 8, "name": "Rope Pushdown (трицепс, др. угол)", "machine": "Кроссовер + канат", "sets": 3, "reps_min": 15, "reps_max": 15, "weight_min_kg": 18, "weight_max_kg": 22, "tempo": "2-0-2-1", "rest_sec": 45, "per_side": false}
+      ],
+      "cooldown": "велик 8-10 км, растяжка груди 30 сек x2, растяжка трицепса за головой 30 сек x сторона"
+    }
+  },
+
+  "progression_rule": "Каждые 2 недели: либо +2,5 кг к рабочему весу, либо +1-2 повторения."
+}
