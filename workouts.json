@@ -43,5 +43,13 @@
   ],
   "exercise_aliases": {},
   "pending_suggestions": [],
-  "targets": {}
+  "targets": {},
+  "wellness_log": {},
+  "cardio_log": {},
+  "active_phase": {
+    "phase_id": "volume",
+    "started_date": null,
+    "reminder_sent": false
+  },
+  "daily_reminder_sent_date": "2026-07-29"
 }
