@@ -526,3 +526,32 @@ def test_weight_goal_report_same_day_entries_no_pace():
     w.save_weight_for_date(data, "2026-07-28", 120.5)  # перезаписывает, всё равно одна дата
     report = w.format_weight_goal_report(data, PROFILE)
     assert "одна запись" in report.lower()
+
+
+# --- mark_day_skipped / is_day_skipped -------------------------------
+
+def test_is_day_skipped_false_by_default():
+    data = w.load_workouts()
+    assert w.is_day_skipped(data, "2026-07-28") is False
+
+
+def test_mark_day_skipped_sets_flag():
+    data = w.load_workouts()
+    w.mark_day_skipped(data, "2026-07-28", reason="болею")
+    assert w.is_day_skipped(data, "2026-07-28") is True
+
+
+def test_mark_day_skipped_independent_dates():
+    data = w.load_workouts()
+    w.mark_day_skipped(data, "2026-07-27", reason="болею")
+    assert w.is_day_skipped(data, "2026-07-27") is True
+    assert w.is_day_skipped(data, "2026-07-28") is False
+
+
+def test_load_workouts_missing_skipped_days_key_does_not_crash():
+    data = {"schema_version": 1, "sets": [], "exercise_aliases": {},
+            "pending_suggestions": [], "targets": {}, "wellness_log": {},
+            "cardio_log": {}, "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False},
+            "weight_log": {}}
+    data.setdefault("skipped_days", {})
+    assert w.is_day_skipped(data, "2026-07-28") is False

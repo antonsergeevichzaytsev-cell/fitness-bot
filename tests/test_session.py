@@ -1176,3 +1176,39 @@ def test_is_goal_request_matches_keywords():
 
 def test_is_goal_request_false_for_workout_log():
     assert sess.is_goal_request("присед 50 на 8") is False
+
+
+# --- is_skip_day_request ------------------------------------------------
+
+def test_is_skip_day_request_matches_illness_keywords():
+    for text in ["я болею", "заболел", "нет тренировкам", "пропуск дня",
+                 "сегодня не тренируюсь"]:
+        assert sess.is_skip_day_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_skip_day_request_false_for_exercise_skip():
+    # 'пропусти' (одно упражнение) НЕ должно триггерить пропуск дня
+    assert sess.is_skip_day_request("пропусти это упражнение") is False
+
+
+def test_is_skip_day_request_false_for_workout_log():
+    assert sess.is_skip_day_request("присед 50 на 8") is False
+
+
+def test_skip_day_and_skip_exercise_both_match_generic_propusk():
+    # Задокументированная коллизия: 'пропуск дня' содержит слово
+    # 'пропуск', которое тоже есть в SKIP_KEYWORDS — main() должен
+    # проверять is_skip_day_request ПЕРВЫМ
+    assert sess.is_skip_day_request("пропуск дня") is True
+    assert sess.is_skip_request("пропуск дня") is True  # тоже True — порядок проверок критичен
+
+
+# --- should_send_daily_reminder: пропуск дня -----------------------------
+
+def test_daily_reminder_silenced_after_mark_day_skipped():
+    data = w.load_workouts()
+    data["sets"] = []
+    late_monday = datetime(2026, 7, 27, 16, 0, tzinfo=timezone.utc)
+    assert sess.should_send_daily_reminder(data, now=late_monday) is True  # до отметки
+    w.mark_day_skipped(data, "2026-07-27", reason="болею")
+    assert sess.should_send_daily_reminder(data, now=late_monday) is False  # после

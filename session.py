@@ -23,6 +23,8 @@ SET_DONE_KEYWORDS = ["взял", "готово", "сделал", "есть"]
 EXTEND_REST_KEYWORDS = ["продли", "ещё минут", "ещё секунд", "устал", "нужно больше", "добавь врем"]
 REPLACE_KEYWORDS = ["замени", "заменить", "занят", "не работает", "сломан", "другое упражнение"]
 SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делать", "скип"]
+SKIP_DAY_KEYWORDS = ["пропуск дня", "болею", "заболел", "нет тренировкам", "не будет тренировки",
+                     "сегодня не тренируюсь", "пропускаю сегодня"]
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
 GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "покажи цель", "сколько до цели", "динамика веса"]
@@ -108,6 +110,16 @@ def is_replace_exercise_request(text):
     safety.py перед тем, как предложить что-либо)."""
     t = text.strip().lower()
     return any(kw in t for kw in REPLACE_KEYWORDS)
+
+
+def is_skip_day_request(text):
+    """'болею', 'нет тренировкам', 'пропуск дня' — сообщение о том, что
+    сегодня тренировки не будет ВООБЩЕ (не требует активной сессии, не
+    про пропуск одного упражнения). Должна проверяться РАНЬШЕ
+    is_skip_request в main() — 'пропуск дня' содержит слово 'пропуск',
+    которое само по себе есть в SKIP_KEYWORDS."""
+    t = text.strip().lower()
+    return any(kw in t for kw in SKIP_DAY_KEYWORDS)
 
 
 def is_skip_request(text):
@@ -238,6 +250,9 @@ def should_send_daily_reminder(data, now=None):
     already_trained = any(s["date"] == today_str for s in data.get("sets", []))
     if already_trained:
         return False
+
+    if w.is_day_skipped(data, today_str):
+        return False  # Антон явно сказал, что сегодня тренировки не будет
 
     return True
 

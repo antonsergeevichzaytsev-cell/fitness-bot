@@ -367,6 +367,20 @@ def handle_replace_request(data, reason_text):
     return text, markup
 
 
+def handle_skip_day(data, text):
+    """Обрабатывает 'болею'/'нет тренировкам'/'пропуск дня' — фиксирует
+    сегодняшний день как явно пропущенный, не требует активной сессии.
+    Если сессия почему-то активна (маловероятно, но возможно) —
+    закрывает её тихо, не строя полный отчёт (пропуск дня — это не
+    завершённая тренировка, отчёт был бы бессмысленным)."""
+    if sess.is_session_active(data):
+        sess.end_session(data)  # тихо закрываем, без построения отчёта
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    w.mark_day_skipped(data, today, reason=text)
+    return "Понял, сегодня пропуск. Отдыхай, увидимся на следующей тренировке по расписанию."
+
+
 def handle_skip(data):
     """Обрабатывает 'пропусти' — пропускает текущее упражнение целиком
     без записи подходов, через session.skip_exercise."""
@@ -673,6 +687,10 @@ def main():
         if sess.is_replace_exercise_request(text):
             reply_text, markup = handle_replace_request(data, text)
             outgoing.append((reply_text, markup, None))
+            continue
+
+        if sess.is_skip_day_request(text):
+            outgoing.append((handle_skip_day(data, text), None, None))
             continue
 
         if sess.is_skip_request(text):

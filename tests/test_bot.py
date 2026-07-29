@@ -938,3 +938,44 @@ def test_handle_goal_request_uses_real_profile():
     profile = safety.get_profile()
     assert str(profile["target_weight_kg"]) in result
     assert profile["target_date"] in result
+
+
+# --- handle_skip_day --------------------------------------------------
+
+def test_handle_skip_day_without_active_session():
+    data = w.load_workouts()
+    data["skipped_days"] = {}
+    result = bot.handle_skip_day(data, "я болею")
+    assert "пропуск" in result.lower()
+
+
+def test_handle_skip_day_marks_today_skipped():
+    data = w.load_workouts()
+    data["skipped_days"] = {}
+    bot.handle_skip_day(data, "заболел")
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert w.is_day_skipped(data, today) is True
+
+
+def test_handle_skip_day_closes_active_session_silently():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    assert sess.is_session_active(data) is True
+    bot.handle_skip_day(data, "болею")
+    assert sess.is_session_active(data) is False
+
+
+def test_exact_screenshot_scenario_no_longer_confuses_bot():
+    # Регрессия на реальный разговор: 'я болею. нет тренировкам' раньше
+    # уходило в общий DeepSeek-парсер и возвращало непонятный уточняющий
+    # вопрос. Теперь должно распознаваться детерминированно.
+    data = w.load_workouts()
+    data["skipped_days"] = {}
+    assert sess.is_skip_day_request("я болею. нет тренировкам") is True
+    result = bot.handle_skip_day(data, "я болею. нет тренировкам")
+    assert "уточните" not in result.lower()
+    assert "не понял" not in result.lower()

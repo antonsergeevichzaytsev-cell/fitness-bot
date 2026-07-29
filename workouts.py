@@ -17,13 +17,14 @@ def load_workouts():
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
                 "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
                 "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False},
-                "weight_log": {}}
+                "weight_log": {}, "skipped_days": {}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
         data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
         data.setdefault("cardio_log", {})
         data.setdefault("active_phase", {"phase_id": "volume", "started_date": None, "reminder_sent": False})
         data.setdefault("weight_log", {})
+        data.setdefault("skipped_days", {})
         return data
 
 
@@ -172,6 +173,20 @@ def get_weight_history(data, limit_entries=None):
     if limit_entries is not None:
         entries = entries[-limit_entries:]
     return entries
+
+
+def mark_day_skipped(data, date, reason=""):
+    """Помечает конкретную дату как явно пропущенную (болезнь, нет
+    времени и т.п.) — не требует активной сессии тренировки. Нужно,
+    чтобы should_send_daily_reminder (session.py) не напоминал про
+    тренировку, которую Антон уже явно отменил на сегодня."""
+    data.setdefault("skipped_days", {})[date] = {"reason": reason}
+
+
+def is_day_skipped(data, date):
+    """True, если дата явно помечена как пропущенная через
+    mark_day_skipped."""
+    return date in data.get("skipped_days", {})
 
 
 def format_weight_goal_report(data, profile):
