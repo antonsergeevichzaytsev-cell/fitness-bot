@@ -28,6 +28,8 @@ SKIP_DAY_KEYWORDS = ["пропуск дня", "болею", "заболел", "�
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
 GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "покажи цель", "сколько до цели", "динамика веса"]
+WEEK_SUMMARY_KEYWORDS = ["итоги недели", "итоги за неделю", "сводка за неделю", "статистика за неделю"]
+MONTH_SUMMARY_KEYWORDS = ["итоги месяца", "итоги за месяц", "сводка за месяц", "статистика за месяц"]
 CARDIO_KEYWORD = "кардио"
 PHASE_KEYWORD = "фаза"
 PHASE_NAME_TO_ID = {"силовой": "strength", "силовая": "strength",
@@ -151,6 +153,22 @@ def is_goal_request(text):
     перехватить 'прогресс по весу'."""
     t = text.strip().lower()
     return any(kw in t for kw in GOAL_KEYWORDS)
+
+
+def is_week_summary_request(text):
+    """'итоги недели', 'сводка за неделю' — запрос агрегированной
+    статистики за последние 7 дней. Проверяется РАНЬШЕ
+    is_month_summary_request и is_progress_request в main() (порядок
+    важен, если когда-нибудь появятся пересекающиеся слова)."""
+    t = text.strip().lower()
+    return any(kw in t for kw in WEEK_SUMMARY_KEYWORDS)
+
+
+def is_month_summary_request(text):
+    """'итоги месяца', 'сводка за месяц' — запрос агрегированной
+    статистики за последние 30 дней."""
+    t = text.strip().lower()
+    return any(kw in t for kw in MONTH_SUMMARY_KEYWORDS)
 
 
 def is_cardio_message(text):

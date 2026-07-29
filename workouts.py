@@ -243,6 +243,59 @@ def format_weight_goal_report(data, profile):
     return "\n".join(lines)
 
 
+def format_period_summary(data, days, now=None):
+    """Строит сводку за период (последние `days` календарных дней,
+    включая сегодня): сколько дней с реальными тренировками, сколько
+    явных пропусков, общий тоннаж, общее кардио, среднее самочувствие
+    (сон/стресс), если заполнялось хоть раз за период.
+
+    Период считается по календарным дням от (сегодня - days + 1) до
+    сегодня включительно — не по количеству тренировок, а по факту
+    времени, поэтому 'дней тренировок' может быть меньше, чем
+    тренировочных дней по расписанию в этом диапазоне (если что-то
+    пропущено и не помечено явно через mark_day_skipped)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    period_start = (now - timedelta(days=days - 1)).date()
+    period_end = now.date()
+    period_dates = {(period_start + timedelta(days=i)).isoformat() for i in range((period_end - period_start).days + 1)}
+
+    sets_in_period = [s for s in data.get("sets", []) if s["date"] in period_dates]
+    training_dates = sorted({s["date"] for s in sets_in_period})
+    skipped_in_period = [d for d in data.get("skipped_days", {}) if d in period_dates]
+
+    total_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in sets_in_period)
+
+    total_cardio_km = 0.0
+    for date in period_dates:
+        cardio = get_cardio_for_date(data, date)
+        total_cardio_km += cardio["total_km"]
+
+    sleep_values = []
+    stress_values = []
+    for date in training_dates:
+        wellness = get_wellness_for_date(data, date)
+        if wellness:
+            if wellness.get("sleep_hours") is not None:
+                sleep_values.append(wellness["sleep_hours"])
+            if wellness.get("stress_level") is not None:
+                stress_values.append(wellness["stress_level"])
+
+    period_name = "неделю" if days == 7 else "месяц" if days == 30 else f"{days} дней"
+    lines = [f"\U0001f4c8 <b>Итоги за {period_name}</b> ({period_start.isoformat()} — {period_end.isoformat()})\n"]
+    lines.append(f"Тренировок: {len(training_dates)}")
+    if skipped_in_period:
+        lines.append(f"Пропусков (отмечено явно): {len(skipped_in_period)}")
+    lines.append(f"Общий тоннаж: {round(total_tonnage)} кг")
+    if total_cardio_km > 0:
+        lines.append(f"Кардио: {round(total_cardio_km, 1)} км")
+    if sleep_values:
+        lines.append(f"Средний сон: {round(sum(sleep_values) / len(sleep_values), 1)}ч")
+    if stress_values:
+        lines.append(f"Средний стресс: {round(sum(stress_values) / len(stress_values), 1)}/10")
+
+    return "\n".join(lines)
+
 
 def get_active_phase(data):
     """Возвращает {"phase_id": ..., "started_date": ..., "reminder_sent":

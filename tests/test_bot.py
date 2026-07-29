@@ -979,3 +979,21 @@ def test_exact_screenshot_scenario_no_longer_confuses_bot():
     result = bot.handle_skip_day(data, "я болею. нет тренировкам")
     assert "уточните" not in result.lower()
     assert "не понял" not in result.lower()
+
+
+# --- handle_summary_request ----------------------------------------------
+
+def test_handle_summary_request_week():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа", "2026-07-27", 45.0, 10, 1)
+    result = bot.handle_summary_request(data, 7)
+    assert "неделю" in result
+    assert "Тренировок: 1" in result
+
+
+def test_handle_summary_request_month():
+    data = w.load_workouts()
+    data["sets"] = []
+    result = bot.handle_summary_request(data, 30)
+    assert "месяц" in result

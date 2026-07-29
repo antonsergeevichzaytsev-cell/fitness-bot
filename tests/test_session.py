@@ -1212,3 +1212,30 @@ def test_daily_reminder_silenced_after_mark_day_skipped():
     assert sess.should_send_daily_reminder(data, now=late_monday) is True  # до отметки
     w.mark_day_skipped(data, "2026-07-27", reason="болею")
     assert sess.should_send_daily_reminder(data, now=late_monday) is False  # после
+
+
+# --- is_week_summary_request / is_month_summary_request -----------------
+
+def test_is_week_summary_request_matches_keywords():
+    for text in ["итоги недели", "итоги за неделю", "сводка за неделю",
+                 "статистика за неделю"]:
+        assert sess.is_week_summary_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_week_summary_request_false_for_unrelated():
+    assert sess.is_week_summary_request("присед 50 на 8") is False
+
+
+def test_is_month_summary_request_matches_keywords():
+    for text in ["итоги месяца", "итоги за месяц", "сводка за месяц",
+                 "статистика за месяц"]:
+        assert sess.is_month_summary_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_month_summary_request_false_for_week_request():
+    assert sess.is_month_summary_request("итоги недели") is False
+
+
+def test_week_and_month_requests_do_not_overlap():
+    assert sess.is_week_summary_request("итоги месяца") is False
+    assert sess.is_month_summary_request("итоги недели") is False

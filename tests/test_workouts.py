@@ -2,6 +2,7 @@
 через алиасы, история по упражнению, targets.
 """
 import sys
+from datetime import datetime, timezone
 
 sys.path.insert(0, "..")
 import workouts as w
@@ -555,3 +556,98 @@ def test_load_workouts_missing_skipped_days_key_does_not_crash():
             "weight_log": {}}
     data.setdefault("skipped_days", {})
     assert w.is_day_skipped(data, "2026-07-28") is False
+
+
+# --- format_period_summary -------------------------------------------
+
+def test_period_summary_empty_period():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "Тренировок: 0" in report
+    assert "Общий тоннаж: 0" in report
+    assert "Пропусков" not in report  # нет пропусков — секция не показывается
+    assert "Кардио" not in report
+    assert "Средний сон" not in report
+
+
+def test_period_summary_counts_unique_training_days():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа", "2026-07-22", 45.0, 10, 1)
+    w.add_set(data, "жим лёжа", "2026-07-22", 45.0, 10, 2)  # тот же день
+    w.add_set(data, "жим лёжа", "2026-07-24", 50.0, 10, 1)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "Тренировок: 2" in report  # 2 уникальных дня, не 3 сета
+
+
+def test_period_summary_shows_tonnage():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа", "2026-07-22", 45.0, 10, 1)  # 450
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "450" in report
+
+
+def test_period_summary_shows_skipped_days():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    w.mark_day_skipped(data, "2026-07-25", reason="болею")
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "Пропусков (отмечено явно): 1" in report
+
+
+def test_period_summary_excludes_dates_outside_range():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа", "2026-07-01", 45.0, 10, 1)  # больше недели назад
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "Тренировок: 0" in report  # старая запись не входит в недельный период
+
+
+def test_period_summary_includes_cardio():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["cardio_log"] = {}
+    w.add_cardio(data, "2026-07-22", 6.0)
+    w.add_cardio(data, "2026-07-24", 9.0)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "15.0 км" in report
+
+
+def test_period_summary_includes_average_wellness():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["wellness_log"] = {}
+    w.add_set(data, "жим лёжа", "2026-07-22", 45.0, 10, 1)
+    w.save_wellness_for_date(data, "2026-07-22", sleep_hours=6.0, stress_level=5)
+    w.add_set(data, "жим лёжа", "2026-07-24", 45.0, 10, 1)
+    w.save_wellness_for_date(data, "2026-07-24", sleep_hours=8.0, stress_level=3)
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 7, now=now)
+    assert "7.0ч" in report  # среднее (6+8)/2
+    assert "4.0/10" in report  # среднее (5+3)/2
+
+
+def test_period_summary_month_naming():
+    data = w.load_workouts()
+    data["sets"] = []
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 30, now=now)
+    assert "за месяц" in report
+
+
+def test_period_summary_custom_days_naming():
+    data = w.load_workouts()
+    data["sets"] = []
+    now = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    report = w.format_period_summary(data, 14, now=now)
+    assert "14 дней" in report

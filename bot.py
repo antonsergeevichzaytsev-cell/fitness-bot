@@ -444,6 +444,14 @@ def handle_goal_request(data):
     return report
 
 
+def handle_summary_request(data, days):
+    """Обрабатывает 'итоги недели'/'итоги месяца' — строит агрегированную
+    сводку через workouts.format_period_summary. days=7 для недели,
+    days=30 для месяца — вызывающий код (main()) передаёт нужное число
+    в зависимости от того, какая команда сработала."""
+    return w.format_period_summary(data, days)
+
+
 def handle_progress_request(data, text):
     """Обрабатывает 'покажи прогресс по X' — извлекает название через
     session.extract_progress_query, находит упражнение через
@@ -652,6 +660,14 @@ def main():
         if sess.is_awaiting_wellness_input(data):
             for msg_text in handle_wellness_answer(data, text):
                 outgoing.append((msg_text, None, None))
+            continue
+
+        if sess.is_week_summary_request(text):
+            outgoing.append((handle_summary_request(data, 7), None, None))
+            continue
+
+        if sess.is_month_summary_request(text):
+            outgoing.append((handle_summary_request(data, 30), None, None))
             continue
 
         if sess.is_goal_request(text):
