@@ -191,3 +191,77 @@ def test_main_rest_timer_and_daily_reminder_are_independent():
     # already_trained=True для daily reminder (проверка по data['sets'])
     assert len(sent) == 1
     assert "Отдых закончился" in sent[0]
+
+
+# --- напоминание о смене фазы периодизации -----------------------------
+
+def test_build_phase_reminder_text_includes_phase_name():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-06-01")
+    text = timer.build_phase_reminder_text(data)
+    assert "Силовой" in text
+    assert "6" in text  # PHASE_REMINDER_WEEKS
+    assert "фаза" in text.lower()
+
+
+def test_main_sends_phase_reminder_when_due():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-06-01")  # давно, больше 6 недель
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.save_workouts"), \
+         mock.patch("timer.w.load_workouts", return_value=data):
+        result = timer.main()
+
+    assert result == 0
+    assert len(sent) == 1
+    assert "Силовой" in sent[0]
+    assert data["active_phase"]["reminder_sent"] is True
+
+
+def test_main_no_phase_reminder_too_early():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", datetime.now(timezone.utc).date().isoformat())  # только что
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.load_workouts", return_value=data):
+        timer.main()
+
+    assert sent == []
+
+
+def test_main_no_phase_reminder_when_default_volume():
+    data = w.load_workouts()  # active_phase дефолтный, started_date=None
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.load_workouts", return_value=data):
+        timer.main()
+
+    assert sent == []
+
+
+def test_main_all_three_checks_independent():
+    # Регрессия: все три проверки (rest timer, daily reminder, phase
+    # reminder) должны работать в одном прогоне независимо, не
+    # блокируя друг друга
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-06-01")
+    sess.start_session(data, day_id="1")
+    sess.advance_position(data, weight_kg=47.5, reps=10)
+    data["active_session"]["resting_until"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=10)
+    ).isoformat()
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.save_workouts"), \
+         mock.patch("timer.w.load_workouts", return_value=data):
+        timer.main()
+
+    # rest timer сработал (истёк), phase reminder сработал (>6 недель) —
+    # daily reminder НЕ сработал (already_trained=True, т.к. сессия
+    # активна сегодня)
+    assert len(sent) == 2

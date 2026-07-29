@@ -15,7 +15,7 @@ def test_load_workouts_missing_file_returns_empty_schema(tmp_path, monkeypatch):
     data = w.load_workouts()
     assert data == {"schema_version": 1, "sets": [], "exercise_aliases": {},
                      "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
-                     "active_phase": {"phase_id": "volume", "started_date": None}}
+                     "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False}}
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -399,3 +399,18 @@ def test_set_active_phase_overwrites_previous():
     phase = w.get_active_phase(data)
     assert phase["phase_id"] == "deficit"
     assert phase["started_date"] == "2026-07-28"
+
+
+# --- mark_phase_reminder_sent -----------------------------------------
+
+def test_mark_phase_reminder_sent_sets_flag():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    w.mark_phase_reminder_sent(data)
+    assert data["active_phase"]["reminder_sent"] is True
+
+
+def test_mark_phase_reminder_sent_no_active_phase_does_not_crash():
+    data = w.load_workouts()
+    del data["active_phase"]
+    w.mark_phase_reminder_sent(data)  # не должно упасть

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Проактивный таймер отдыха + напоминание о тренировке — запускается
-GitHub Actions workflow по Cron Trigger'у из cloudflare-worker/worker.js
-(см. cron_ping в worker.js и .github/workflows/rest_timer.yml), не по
-прямому webhook от Telegram.
+"""Проактивный таймер отдыха + напоминания — запускается GitHub Actions
+workflow по Cron Trigger'у из cloudflare-worker/worker.js (см. cron_ping
+в worker.js и .github/workflows/rest_timer.yml), не по прямому webhook
+от Telegram.
 
-Две независимые проверки за один прогон:
+Три независимые проверки за один прогон:
 1. Таймер отдыха: session.rest_timer_expired() — истёк ли отдых
    текущего подхода И ещё не отправлено напоминание. Требует активной
    сессии.
@@ -12,9 +12,14 @@ GitHub Actions workflow по Cron Trigger'у из cloudflare-worker/worker.js
    сегодня тренировочный день, время после 18:00 МСК (дефолт, точное
    время не выбрано), тренировки сегодня ещё не было. Требует
    ОТСУТСТВИЯ активной/завершённой сессии сегодня.
+3. Напоминание о смене фазы периодизации: session.
+   should_send_phase_reminder() — активный блок (силовой/объёмный/
+   дефицитный) длится >= 6 недель (PHASE_REMINDER_WEEKS, середина
+   диапазона 4-8, согласовано с Антоном 28.07.2026). Не зависит от
+   активной сессии вообще — фаза живёт своей независимой временной
+   шкалой.
 
-Оба взаимоисключающи на практике (первая требует активной сессии,
-вторая — что тренировки сегодня не было вообще), но проверяются
+Все три взаимоисключающи по большей части на практике, но проверяются
 независимо, не через elif — на случай будущих изменений условий, где
 это перестанет быть строго взаимоисключающим.
 
@@ -75,6 +80,19 @@ def build_daily_reminder_text():
     )
 
 
+def build_phase_reminder_text(data):
+    """Текст напоминания о том, что текущий блок периодизации длится
+    уже >= 6 недель — пора решить, менять ли блок."""
+    phase = w.get_active_phase(data)
+    phase_info = prog.get_phase_info(phase["phase_id"])
+    phase_name = phase_info["name"] if phase_info else phase["phase_id"]
+    return (
+        f"\U0001f504 Блок «{phase_name}» длится уже {sess.PHASE_REMINDER_WEEKS}+ недель.\n"
+        f"Пора решить, менять ли фазу — напиши «фаза силовой», «фаза объёмный» "
+        f"или «фаза дефицитный», если хочешь сменить, или просто продолжай."
+    )
+
+
 def main():
     data = w.load_workouts()
     did_something = False
@@ -95,10 +113,16 @@ def main():
         did_something = True
         print("Daily workout reminder sent.")
 
+    if sess.should_send_phase_reminder(data):
+        tg_send(build_phase_reminder_text(data))
+        w.mark_phase_reminder_sent(data)
+        did_something = True
+        print("Phase reminder sent.")
+
     if did_something:
         w.save_workouts(data)
     else:
-        print("Nothing to do — no active rest timer, no daily reminder due.")
+        print("Nothing to do — no active rest timer, no daily reminder due, no phase reminder due.")
 
     return 0
 

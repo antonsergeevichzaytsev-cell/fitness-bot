@@ -1101,3 +1101,47 @@ def test_extract_phase_id_volume():
 
 def test_extract_phase_id_unknown_returns_none():
     assert sess.extract_phase_id("фаза что-то непонятное") is None
+
+
+# --- should_send_phase_reminder / mark_phase_reminder_sent -----------
+
+def test_phase_reminder_false_too_early():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    early = datetime(2026, 7, 28, tzinfo=timezone.utc)  # 27 дней
+    assert sess.should_send_phase_reminder(data, now=early) is False
+
+
+def test_phase_reminder_true_after_six_weeks():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    late = datetime(2026, 8, 13, tzinfo=timezone.utc)  # 43 дня, >6 недель
+    assert sess.should_send_phase_reminder(data, now=late) is True
+
+
+def test_phase_reminder_false_for_default_volume_no_started_date():
+    data = w.load_workouts()
+    late = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    assert sess.should_send_phase_reminder(data, now=late) is False
+
+
+def test_phase_reminder_false_after_already_sent():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    w.mark_phase_reminder_sent(data)
+    late = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    assert sess.should_send_phase_reminder(data, now=late) is False
+
+
+def test_phase_reminder_resets_on_phase_change():
+    data = w.load_workouts()
+    w.set_active_phase(data, "strength", "2026-07-01")
+    w.mark_phase_reminder_sent(data)
+    w.set_active_phase(data, "deficit", "2026-08-13")  # новый блок сбрасывает флаг
+    assert data["active_phase"]["reminder_sent"] is False
+
+
+def test_mark_phase_reminder_sent_no_active_phase_does_not_crash():
+    data = w.load_workouts()
+    del data["active_phase"]  # искусственно убираем поле
+    w.mark_phase_reminder_sent(data)  # не должно упасть

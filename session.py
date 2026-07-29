@@ -240,6 +240,30 @@ def mark_daily_reminder_sent(data, now=None):
     data["daily_reminder_sent_date"] = msk_now.date().isoformat()
 
 
+PHASE_REMINDER_WEEKS = 6  # середина диапазона 4-8 недель, согласовано с Антоном 28.07.2026
+
+
+def should_send_phase_reminder(data, now=None):
+    """True, если активный блок периодизации длится >= PHASE_REMINDER_
+    WEEKS недель И напоминание об этом ещё не отправлено. False, если
+    started_date не задан (фаза 'volume' по умолчанию, никогда не
+    менялась явно — нечего отсчитывать) или напоминание уже отправлено
+    для текущего блока (reminder_sent сбрасывается только при явной
+    смене фазы через set_active_phase, не сам по себе со временем)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    phase = w.get_active_phase(data)
+    started_date = phase.get("started_date")
+    if started_date is None:
+        return False
+    if phase.get("reminder_sent"):
+        return False
+
+    started = datetime.fromisoformat(started_date).replace(tzinfo=timezone.utc)
+    weeks_elapsed = (now - started).days / 7
+    return weeks_elapsed >= PHASE_REMINDER_WEEKS
+
+
 def skip_exercise(data):
     """Пропускает текущее упражнение целиком (не записывая ни одного
     подхода) — переходит на следующее упражнение в дне, как будто оно

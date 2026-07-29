@@ -16,12 +16,12 @@ def load_workouts():
     if not os.path.exists(WORKOUTS_PATH):
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
                 "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
-                "active_phase": {"phase_id": "volume", "started_date": None}}
+                "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
         data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
         data.setdefault("cardio_log", {})
-        data.setdefault("active_phase", {"phase_id": "volume", "started_date": None})
+        data.setdefault("active_phase", {"phase_id": "volume", "started_date": None, "reminder_sent": False})
         return data
 
 
@@ -149,18 +149,29 @@ def get_cardio_for_date(data, date):
 
 
 def get_active_phase(data):
-    """Возвращает {"phase_id": ..., "started_date": ...} — текущий блок
-    периодизации. По умолчанию 'volume' (базовый план программы, без
-    модификаторов) с started_date=None, если фаза никогда не менялась
-    явно."""
-    return data.get("active_phase", {"phase_id": "volume", "started_date": None})
+    """Возвращает {"phase_id": ..., "started_date": ..., "reminder_sent":
+    ...} — текущий блок периодизации. По умолчанию 'volume' (базовый
+    план программы, без модификаторов) с started_date=None, если фаза
+    никогда не менялась явно."""
+    return data.get("active_phase", {"phase_id": "volume", "started_date": None, "reminder_sent": False})
 
 
 def set_active_phase(data, phase_id, started_date):
     """Устанавливает активный блок периодизации ('strength'/'volume'/
-    'deficit') с датой начала — нужна для отсчёта 4-8 недель на
-    напоминание сменить блок."""
-    data["active_phase"] = {"phase_id": phase_id, "started_date": started_date}
+    'deficit') с датой начала — нужна для отсчёта 6 недель на
+    напоминание сменить блок. reminder_sent сбрасывается в False —
+    новый блок начинает новый отсчёт, старое напоминание неактуально."""
+    data["active_phase"] = {"phase_id": phase_id, "started_date": started_date, "reminder_sent": False}
+
+
+def mark_phase_reminder_sent(data):
+    """Помечает, что напоминание о смене блока (истёк 6-недельный срок)
+    отправлено — не даёт Cron Trigger'у слать его повторно каждый день
+    после истечения срока, пока блок не сменится явно (set_active_phase
+    сбрасывает флаг заново)."""
+    phase = data.get("active_phase")
+    if phase:
+        phase["reminder_sent"] = True
 
 
 def format_progress_report(data, exercise, limit_sessions=10):
