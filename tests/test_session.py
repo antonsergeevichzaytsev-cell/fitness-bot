@@ -1145,3 +1145,34 @@ def test_mark_phase_reminder_sent_no_active_phase_does_not_crash():
     data = w.load_workouts()
     del data["active_phase"]  # искусственно убираем поле
     w.mark_phase_reminder_sent(data)  # не должно упасть
+
+
+# --- end_session: сохранение веса в weight_log ---------------------------
+
+def test_end_session_persists_weight_to_log():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.set_body_weight(data, 118.5)
+    session_date = data["active_session"]["date"]
+    sess.end_session(data)
+    history = w.get_weight_history(data)
+    assert history == [(session_date, 118.5)]
+
+
+def test_end_session_does_not_log_weight_when_not_given():
+    data = w.load_workouts()
+    sess.start_session(data, day_id="1")
+    sess.end_session(data)
+    assert w.get_weight_history(data) == []
+
+
+# --- is_goal_request ---------------------------------------------------
+
+def test_is_goal_request_matches_keywords():
+    for text in ["цель по весу", "прогресс по весу", "покажи цель",
+                 "сколько до цели", "динамика веса"]:
+        assert sess.is_goal_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_goal_request_false_for_workout_log():
+    assert sess.is_goal_request("присед 50 на 8") is False

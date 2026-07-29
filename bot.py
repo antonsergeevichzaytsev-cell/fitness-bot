@@ -418,6 +418,18 @@ def handle_phase_change(data, text):
     return f"\U0001f504 Фаза переключена на «{phase_info['name']}»: {phase_info['description']}."
 
 
+def handle_goal_request(data):
+    """Обрабатывает 'цель по весу'/'сколько до цели'/'динамика веса' —
+    строит отчёт через workouts.format_weight_goal_report, используя
+    профиль (target_weight_kg/target_date/weekly_loss_target_kg) из
+    safety_constraints.json через safety.get_profile()."""
+    profile = safety.get_profile()
+    report = w.format_weight_goal_report(data, profile)
+    if report is None:
+        return "Ещё нет ни одной записи веса — вес записывается автоматически перед каждой тренировкой (вопрос после «начал»)."
+    return report
+
+
 def handle_progress_request(data, text):
     """Обрабатывает 'покажи прогресс по X' — извлекает название через
     session.extract_progress_query, находит упражнение через
@@ -626,6 +638,10 @@ def main():
         if sess.is_awaiting_wellness_input(data):
             for msg_text in handle_wellness_answer(data, text):
                 outgoing.append((msg_text, None, None))
+            continue
+
+        if sess.is_goal_request(text):
+            outgoing.append((handle_goal_request(data), None, None))
             continue
 
         if sess.is_progress_request(text):

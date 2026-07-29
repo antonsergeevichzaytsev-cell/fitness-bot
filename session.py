@@ -25,6 +25,7 @@ REPLACE_KEYWORDS = ["замени", "заменить", "занят", "не ра
 SKIP_KEYWORDS = ["пропусти", "пропуск", "не буду делать", "скип"]
 UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "не то записал", "ошибся"]
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
+GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "покажи цель", "сколько до цели", "динамика веса"]
 CARDIO_KEYWORD = "кардио"
 PHASE_KEYWORD = "фаза"
 PHASE_NAME_TO_ID = {"силовой": "strength", "силовая": "strength",
@@ -127,6 +128,17 @@ def is_progress_request(text):
     тренда по конкретному упражнению за несколько тренировок."""
     t = text.strip().lower()
     return any(kw in t for kw in PROGRESS_KEYWORDS)
+
+
+def is_goal_request(text):
+    """'цель по весу', 'сколько до цели', 'динамика веса' — запрос
+    отчёта о прогрессе к целевому весу тела (не путать с
+    is_progress_request — тот про конкретное УПРАЖНЕНИЕ, этот про
+    вес тела). Проверяется раньше is_progress_request в main() —
+    иначе более общее 'прогресс' в PROGRESS_KEYWORDS могло бы
+    перехватить 'прогресс по весу'."""
+    t = text.strip().lower()
+    return any(kw in t for kw in GOAL_KEYWORDS)
 
 
 def is_cardio_message(text):
@@ -608,6 +620,13 @@ def end_session(data):
     # не создаём пустую запись 'заполнил, но всё None' без причины.
     if session.get("sleep_hours") is not None or session.get("stress_level") is not None:
         w.save_wellness_for_date(data, session_date, session.get("sleep_hours"), session.get("stress_level"))
+
+    # Тот же принцип для веса тела — раньше вводился перед каждой
+    # тренировкой (нужен для калорий), но нигде не сохранялся постоянно
+    # после отчёта. Нужен для трекера цели по весу — динамика/темп
+    # требуют истории по датам.
+    if session.get("body_weight_kg") is not None:
+        w.save_weight_for_date(data, session_date, session["body_weight_kg"])
 
     data["active_session"] = None
     return result

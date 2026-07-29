@@ -83,10 +83,18 @@ def test_main_no_action_when_timer_not_expired():
 
 
 def test_main_no_action_without_active_session():
+    # Мокаем явно на день отдыха (вторник) — без этого тест хрупкий:
+    # если реально запущен в тренировочный день после 18:00 МСК,
+    # should_send_daily_reminder честно сработает, тест ложно упадёт
     data = w.load_workouts()
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
-         mock.patch("timer.w.load_workouts", return_value=data):
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = tuesday
+        mock_prog_dt.now.return_value = tuesday
         result = timer.main()
     assert result == 0
     assert sent == []
@@ -94,10 +102,16 @@ def test_main_no_action_without_active_session():
 
 def test_main_does_not_call_save_workouts_when_no_action():
     # Тихий no-op не должен трогать файл вовсе — экономит запись,
-    # раз это подавляющее большинство прогонов Cron Trigger'а
+    # раз это подавляющее большинство прогонов Cron Trigger'а.
+    # Тот же фикс — явный день отдыха, не полагаемся на реальное время.
     data = w.load_workouts()
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
     with mock.patch("timer.w.load_workouts", return_value=data), \
-         mock.patch("timer.w.save_workouts") as mock_save:
+         mock.patch("timer.w.save_workouts") as mock_save, \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = tuesday
+        mock_prog_dt.now.return_value = tuesday
         timer.main()
     mock_save.assert_not_called()
 
@@ -105,7 +119,7 @@ def test_main_does_not_call_save_workouts_when_no_action():
 # --- ежедневное напоминание о тренировке -----------------------------
 
 def test_build_daily_reminder_text_includes_day_name():
-    with mock.patch("program.datetime") as mock_dt:
+    with mock.patch("program.datetime", wraps=datetime) as mock_dt:
         mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)  # понедельник
         text = timer.build_daily_reminder_text()
     assert "День 1" in text
@@ -122,8 +136,8 @@ def test_main_sends_daily_reminder_when_due():
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
          mock.patch("timer.w.save_workouts"), \
          mock.patch("timer.w.load_workouts", return_value=data), \
-         mock.patch("session.datetime") as mock_sess_dt, \
-         mock.patch("program.datetime") as mock_prog_dt:
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
         mock_sess_dt.now.return_value = late_monday
         mock_prog_dt.now.return_value = late_monday
         result = timer.main()
@@ -142,8 +156,8 @@ def test_main_no_daily_reminder_on_rest_day():
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
          mock.patch("timer.w.load_workouts", return_value=data), \
-         mock.patch("session.datetime") as mock_sess_dt, \
-         mock.patch("program.datetime") as mock_prog_dt:
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
         mock_sess_dt.now.return_value = late_tuesday
         mock_prog_dt.now.return_value = late_tuesday
         timer.main()
@@ -159,8 +173,8 @@ def test_main_no_daily_reminder_if_already_trained():
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
          mock.patch("timer.w.load_workouts", return_value=data), \
-         mock.patch("session.datetime") as mock_sess_dt, \
-         mock.patch("program.datetime") as mock_prog_dt:
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
         mock_sess_dt.now.return_value = late_monday
         mock_prog_dt.now.return_value = late_monday
         timer.main()
@@ -205,13 +219,21 @@ def test_build_phase_reminder_text_includes_phase_name():
 
 
 def test_main_sends_phase_reminder_when_due():
+    # Мокаем явно на день отдыха (вторник) — изолирует от
+    # should_send_daily_reminder, который иначе тоже сработал бы
+    # в реальный тренировочный день после 18:00 МСК
     data = w.load_workouts()
     w.set_active_phase(data, "strength", "2026-06-01")  # давно, больше 6 недель
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
 
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
          mock.patch("timer.w.save_workouts"), \
-         mock.patch("timer.w.load_workouts", return_value=data):
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = tuesday
+        mock_prog_dt.now.return_value = tuesday
         result = timer.main()
 
     assert result == 0
@@ -222,11 +244,16 @@ def test_main_sends_phase_reminder_when_due():
 
 def test_main_no_phase_reminder_too_early():
     data = w.load_workouts()
-    w.set_active_phase(data, "strength", datetime.now(timezone.utc).date().isoformat())  # только что
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    w.set_active_phase(data, "strength", tuesday.date().isoformat())  # только что
 
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
-         mock.patch("timer.w.load_workouts", return_value=data):
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = tuesday
+        mock_prog_dt.now.return_value = tuesday
         timer.main()
 
     assert sent == []
@@ -234,10 +261,15 @@ def test_main_no_phase_reminder_too_early():
 
 def test_main_no_phase_reminder_when_default_volume():
     data = w.load_workouts()  # active_phase дефолтный, started_date=None
+    tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
 
     sent = []
     with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
-         mock.patch("timer.w.load_workouts", return_value=data):
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = tuesday
+        mock_prog_dt.now.return_value = tuesday
         timer.main()
 
     assert sent == []

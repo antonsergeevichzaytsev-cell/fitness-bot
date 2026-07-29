@@ -17,6 +17,7 @@ os.environ.setdefault("DEEPSEEK_API_KEY", "test")
 sys.path.insert(0, "..")
 import bot
 import program as prog
+import safety
 import session as sess
 import workouts as w
 
@@ -906,3 +907,34 @@ def test_phase_change_affects_next_session_plan_display():
     result = bot.handle_wellness_answer(data, "нормально")
     combined = "\n".join(result)
     assert "45-50кг" not in combined  # старый немодифицированный диапазон отсутствует
+
+
+# --- handle_goal_request -------------------------------------------------
+
+def test_handle_goal_request_no_history():
+    data = w.load_workouts()
+    data["weight_log"] = {}
+    result = bot.handle_goal_request(data)
+    assert "нет ни одной записи" in result.lower()
+
+
+def test_handle_goal_request_shows_report():
+    data = w.load_workouts()
+    data["weight_log"] = {}
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-15", 120.0)
+    result = bot.handle_goal_request(data)
+    assert "Цель по весу" in result
+    assert "106" in result  # цель из safety_constraints.json
+
+
+def test_handle_goal_request_uses_real_profile():
+    # Регрессия: должен использовать РЕАЛЬНЫЙ профиль из
+    # safety_constraints.json (safety.get_profile()), не выдуманные числа
+    data = w.load_workouts()
+    data["weight_log"] = {}
+    w.save_weight_for_date(data, "2026-07-28", 121.0)
+    result = bot.handle_goal_request(data)
+    profile = safety.get_profile()
+    assert str(profile["target_weight_kg"]) in result
+    assert profile["target_date"] in result

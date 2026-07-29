@@ -6,7 +6,7 @@
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WORKOUTS_PATH = os.path.join(ROOT, "workouts.json")
@@ -16,12 +16,14 @@ def load_workouts():
     if not os.path.exists(WORKOUTS_PATH):
         return {"schema_version": 1, "sets": [], "exercise_aliases": {},
                 "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
-                "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False}}
+                "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False},
+                "weight_log": {}}
     with open(WORKOUTS_PATH, encoding="utf-8") as f:
         data = json.load(f)
         data.setdefault("wellness_log", {})  # существующие файлы без этого поля не должны падать
         data.setdefault("cardio_log", {})
         data.setdefault("active_phase", {"phase_id": "volume", "started_date": None, "reminder_sent": False})
+        data.setdefault("weight_log", {})
         return data
 
 
@@ -146,6 +148,85 @@ def get_cardio_for_date(data, date):
     entries = data.get("cardio_log", {}).get(date, [])
     total_km = sum(e["km"] for e in entries)
     return {"entries": entries, "total_km": round(total_km, 1)}
+
+
+def save_weight_for_date(data, date, weight_kg):
+    """Сохраняет вес тела для конкретной даты — ПОСТОЯННОЕ хранилище
+    (data['weight_log']), в отличие от session.py's
+    active_session['body_weight_kg'], который живёт только пока сессия
+    открыта и теряется после end_session. Нужно для трекера цели по
+    весу — динамика/темп требуют истории по датам, не только 'текущий
+    вес прямо сейчас'.
+
+    Если на эту дату уже есть запись (несколько тренировок в один
+    день — маловероятно, но возможно), перезаписывает последней —
+    вес тела логично считать один раз в день, не суммировать."""
+    data.setdefault("weight_log", {})[date] = weight_kg
+
+
+def get_weight_history(data, limit_entries=None):
+    """Возвращает список (date, weight_kg) пар, отсортированных по
+    дате по возрастанию (старые первыми). limit_entries=None -> вся
+    история, иначе последние N записей."""
+    entries = sorted(data.get("weight_log", {}).items())
+    if limit_entries is not None:
+        entries = entries[-limit_entries:]
+    return entries
+
+
+def format_weight_goal_report(data, profile):
+    """Строит отчёт о прогрессе к цели по весу тела: текущий вес
+    (последняя запись в истории), сколько осталось до цели, ФАКТИЧЕСКИЙ
+    темп (кг/неделю — считается по первой и последней записи истории,
+    не выдуманное число), прогноз даты достижения цели по этому реальному
+    темпу.
+
+    profile — dict с target_weight_kg/target_date/weekly_loss_target_kg
+    (передаётся параметром, не читается из safety_constraints.json
+    напрямую — держит workouts.py независимым модулем данных, не
+    привязанным к safety.py).
+
+    Возвращает None, если истории веса нет вообще (не с чем считать)."""
+    history = get_weight_history(data)
+    if not history:
+        return None
+
+    first_date, first_weight = history[0]
+    last_date, last_weight = history[-1]
+    target = profile["target_weight_kg"]
+
+    lines = [f"\U0001f3af <b>Цель по весу:</b> {target} кг к {profile['target_date']}"]
+    lines.append(f"Текущий вес: {last_weight} кг (запись от {last_date})")
+    lines.append(f"Осталось: {round(last_weight - target, 1)} кг")
+
+    if len(history) < 2:
+        lines.append("Пока только одна запись — темп появится после следующего взвешивания.")
+        return "\n".join(lines)
+
+    days_elapsed = (datetime.fromisoformat(last_date) - datetime.fromisoformat(first_date)).days
+    if days_elapsed <= 0:
+        lines.append("Все записи за один день — темп появится позже.")
+        return "\n".join(lines)
+
+    weeks_elapsed = days_elapsed / 7
+    actual_weekly_loss = (first_weight - last_weight) / weeks_elapsed
+    lines.append(f"Фактический темп: {round(actual_weekly_loss, 2)} кг/неделю "
+                 f"(план: {profile['weekly_loss_target_kg']} кг/неделю)")
+
+    if actual_weekly_loss > 0:
+        weeks_to_target = (last_weight - target) / actual_weekly_loss
+        if weeks_to_target > 0:
+            projected_date = datetime.fromisoformat(last_date) + timedelta(weeks=weeks_to_target)
+            lines.append(f"При таком темпе цель — примерно {projected_date.date().isoformat()}")
+        else:
+            lines.append("Цель уже достигнута по текущему весу!")
+    elif actual_weekly_loss < 0:
+        lines.append("\u26a0\ufe0f Вес растёт, не снижается — при текущем темпе цель не будет достигнута.")
+    else:
+        lines.append("Вес не меняется — темп 0, прогноз даты недоступен.")
+
+    return "\n".join(lines)
+
 
 
 def get_active_phase(data):

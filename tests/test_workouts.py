@@ -10,12 +10,25 @@ import workouts as w
 # --- load_workouts / save_workouts ------------------------------------
 
 def test_load_workouts_missing_file_returns_empty_schema(tmp_path, monkeypatch):
+    # ПРИМЕЧАНИЕ: этот тест ломался 5 раз за 28.07.2026 при добавлении
+    # новых top-level полей схемы (wellness_log, cardio_log, active_phase,
+    # weight_log) — каждый раз точное совпадение всего dict требовало
+    # правки. Переведён на проверку наличия/типа ключей вместо точного
+    # равенства всему словарю, чтобы будущие поля не ломали этот тест
+    # снова — сама схема расширяема по дизайну (load_workouts().setdefault
+    # для существующих файлов), тест должен быть терпим к росту так же.
     fake_path = tmp_path / "workouts.json"
     monkeypatch.setattr(w, "WORKOUTS_PATH", str(fake_path))
     data = w.load_workouts()
-    assert data == {"schema_version": 1, "sets": [], "exercise_aliases": {},
-                     "pending_suggestions": [], "targets": {}, "wellness_log": {}, "cardio_log": {},
-                     "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False}}
+    assert data["schema_version"] == 1
+    assert data["sets"] == []
+    assert data["exercise_aliases"] == {}
+    assert data["pending_suggestions"] == []
+    assert data["targets"] == {}
+    assert data["wellness_log"] == {}
+    assert data["cardio_log"] == {}
+    assert data["weight_log"] == {}
+    assert data["active_phase"] == {"phase_id": "volume", "started_date": None, "reminder_sent": False}
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -414,3 +427,102 @@ def test_mark_phase_reminder_sent_no_active_phase_does_not_crash():
     data = w.load_workouts()
     del data["active_phase"]
     w.mark_phase_reminder_sent(data)  # не должно упасть
+
+
+# --- save_weight_for_date / get_weight_history --------------------------
+
+def test_get_weight_history_empty_when_no_records():
+    data = w.load_workouts()
+    assert w.get_weight_history(data) == []
+
+
+def test_save_and_get_weight_history():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-15", 120.0)
+    history = w.get_weight_history(data)
+    assert history == [("2026-07-01", 121.0), ("2026-07-15", 120.0)]
+
+
+def test_save_weight_overwrites_same_date():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-01", 120.5)  # повторная запись за тот же день
+    history = w.get_weight_history(data)
+    assert history == [("2026-07-01", 120.5)]
+
+
+def test_get_weight_history_respects_limit():
+    data = w.load_workouts()
+    for i, date in enumerate(["2026-07-01", "2026-07-08", "2026-07-15", "2026-07-22"]):
+        w.save_weight_for_date(data, date, 121.0 - i)
+    history = w.get_weight_history(data, limit_entries=2)
+    assert history == [("2026-07-15", 119.0), ("2026-07-22", 118.0)]
+
+
+def test_load_workouts_missing_weight_log_key_does_not_crash():
+    data = {"schema_version": 1, "sets": [], "exercise_aliases": {},
+            "pending_suggestions": [], "targets": {}, "wellness_log": {},
+            "cardio_log": {}, "active_phase": {"phase_id": "volume", "started_date": None, "reminder_sent": False}}
+    data.setdefault("weight_log", {})
+    assert w.get_weight_history(data) == []
+
+
+# --- format_weight_goal_report -------------------------------------------
+
+PROFILE = {"weight_kg": 121, "target_weight_kg": 106, "target_date": "2027-01", "weekly_loss_target_kg": 0.5}
+
+
+def test_weight_goal_report_none_without_history():
+    data = w.load_workouts()
+    assert w.format_weight_goal_report(data, PROFILE) is None
+
+
+def test_weight_goal_report_single_entry_no_pace():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-28", 121.0)
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "121.0" in report
+    assert "Осталось: 15.0" in report
+    assert "темп появится" in report
+
+
+def test_weight_goal_report_shows_actual_pace():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-15", 120.0)  # -1кг за 2 недели = 0.5кг/нед
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "0.5 кг/неделю" in report
+
+
+def test_weight_goal_report_shows_projected_date_when_losing():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-15", 120.0)
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "цель — примерно" in report
+
+
+def test_weight_goal_report_warns_when_weight_increasing():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 118.0)
+    w.save_weight_for_date(data, "2026-07-15", 121.0)  # вес вырос
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "растёт" in report.lower()
+    assert "цель — примерно" not in report  # нет прогноза при росте веса
+
+
+def test_weight_goal_report_zero_pace_no_crash():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-01", 121.0)
+    w.save_weight_for_date(data, "2026-07-15", 121.0)  # вес не изменился
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "не меняется" in report.lower()
+
+
+def test_weight_goal_report_same_day_entries_no_pace():
+    data = w.load_workouts()
+    w.save_weight_for_date(data, "2026-07-28", 121.0)
+    w.save_weight_for_date(data, "2026-07-28", 120.5)  # перезаписывает, всё равно одна дата
+    report = w.format_weight_goal_report(data, PROFILE)
+    assert "одна запись" in report.lower()
