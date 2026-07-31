@@ -59,6 +59,7 @@ import net
 import parser
 import program as prog
 import progression
+import progress_index
 import readiness
 import safety
 import sanity
@@ -559,6 +560,13 @@ def handle_export_request(data):
     return True
 
 
+def handle_progress_index_request(data):
+    """Обрабатывает 'индекс прогресса'/'мой индекс'/'общий прогресс' —
+    единая метрика через progress_index.format_progress_index_report,
+    за последнюю неделю (days=7 по умолчанию)."""
+    return progress_index.format_progress_index_report(data, days=7)
+
+
 def handle_summary_request(data, days):
     """Обрабатывает 'итоги недели'/'итоги месяца' — строит агрегированную
     сводку через workouts.format_period_summary. days=7 для недели,
@@ -799,6 +807,10 @@ def main():
 
         if sess.is_export_request(text):
             handle_export_request(data)  # отправляет документ напрямую, не через outgoing
+            continue
+
+        if sess.is_progress_index_request(text):
+            outgoing.append((handle_progress_index_request(data), None, None))
             continue
 
         if sess.is_progress_request(text):

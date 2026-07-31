@@ -1342,3 +1342,15 @@ def test_is_export_request_matches_keywords():
 def test_is_export_request_false_for_unrelated():
     assert sess.is_export_request("взял") is False
     assert sess.is_export_request("присед 50 на 8") is False
+
+
+# --- is_progress_index_request ----------------------------------------
+
+def test_is_progress_index_request_matches_keywords():
+    for text in ["индекс прогресса", "покажи индекс", "мой индекс", "общий прогресс"]:
+        assert sess.is_progress_index_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_progress_index_request_no_collision_with_exercise_progress():
+    assert sess.is_progress_request("индекс прогресса") is False
+    assert sess.is_progress_index_request("прогресс по жиму") is False

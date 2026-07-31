@@ -31,6 +31,7 @@ GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "п
 READINESS_KEYWORDS = ["готовность", "как я готов", "готов ли я", "оцени готовность"]
 ONE_RM_KEYWORDS = ["1rm", "1рм", "макс на раз", "максимум на один повтор", "мой максимум"]
 EXPORT_KEYWORDS = ["экспорт", "выгрузи историю", "csv", "скачать историю", "выгрузка"]
+PROGRESS_INDEX_KEYWORDS = ["индекс прогресса", "покажи индекс", "мой индекс", "общий прогресс"]
 WEEK_SUMMARY_KEYWORDS = ["итоги недели", "итоги за неделю", "сводка за неделю", "статистика за неделю"]
 MONTH_SUMMARY_KEYWORDS = ["итоги месяца", "итоги за месяц", "сводка за месяц", "статистика за месяц"]
 CARDIO_KEYWORD = "кардио"
@@ -200,6 +201,15 @@ def is_export_request(text):
     слов."""
     t = text.strip().lower()
     return any(kw in t for kw in EXPORT_KEYWORDS)
+
+
+def is_progress_index_request(text):
+    """'индекс прогресса', 'мой индекс', 'общий прогресс' — запрос
+    единой метрики прогресса (progress_index.py). Проверено на
+    отсутствие пересечений с is_progress_request (та про КОНКРЕТНОЕ
+    упражнение, эта про общий индекс из трёх компонентов)."""
+    t = text.strip().lower()
+    return any(kw in t for kw in PROGRESS_INDEX_KEYWORDS)
 
 
 def is_week_summary_request(text):

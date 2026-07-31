@@ -1143,3 +1143,17 @@ def test_handle_export_request_no_history_sends_message_not_document():
     assert len(sent_messages) == 1
     assert "нечего экспортировать" in sent_messages[0].lower()
     assert sent_docs == []
+
+
+# --- handle_progress_index_request -----------------------------------
+
+def test_handle_progress_index_request_shows_report():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим", "2026-07-13", 40.0, 8, 1)
+    w.add_set(data, "жим", "2026-07-27", 45.0, 8, 1)
+    result = bot.handle_progress_index_request(data)
+    assert "Индекс прогресса" in result
+    assert "Объём" in result
+    assert "Сила" in result
+    assert "Постоянство" in result
