@@ -103,8 +103,14 @@ def test_main_no_action_without_active_session():
 def test_main_does_not_call_save_workouts_when_no_action():
     # Тихий no-op не должен трогать файл вовсе — экономит запись,
     # раз это подавляющее большинство прогонов Cron Trigger'а.
-    # Тот же фикс — явный день отдыха, не полагаемся на реальное время.
+    # ОБНОВЛЕНО: 4я проверка (тихий пропуск) инспектирует ПРЕДЫДУЩИЙ
+    # тренировочный день независимо от того, сегодня отдых или нет —
+    # для настоящего no-op нужно явно показать, что этот день реально
+    # был тренировочным (иначе check_and_mark_silent_skip найдёт
+    # 'пропуск' и запишет файл).
     data = w.load_workouts()
+    data["sets"] = [{"date": "2026-07-27", "exercise": "присед", "weight_kg": 50, "reps": 8, "set_number": 1}]
+    data["skipped_days"] = {}
     tuesday = datetime(2026, 7, 28, tzinfo=timezone.utc)
     with mock.patch("timer.w.load_workouts", return_value=data), \
          mock.patch("timer.w.save_workouts") as mock_save, \
@@ -297,3 +303,43 @@ def test_main_all_three_checks_independent():
     # daily reminder НЕ сработал (already_trained=True, т.к. сессия
     # активна сегодня)
     assert len(sent) == 2
+
+
+# --- тихая фиксация пропуска дня -----------------------------------
+
+def test_main_marks_silent_skip_without_sending_message():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+
+    sent = []
+    with mock.patch("timer.tg_send", side_effect=lambda t: sent.append(t)), \
+         mock.patch("timer.w.save_workouts"), \
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = wed
+        mock_prog_dt.now.return_value = wed
+        result = timer.main()
+
+    assert result == 0
+    assert sent == []  # тихая фиксация, без сообщения в Telegram
+    assert w.is_day_skipped(data, "2026-07-27") is True
+
+
+def test_main_does_not_mark_silent_skip_when_workout_happened():
+    data = w.load_workouts()
+    data["sets"] = [{"date": "2026-07-27", "exercise": "присед", "weight_kg": 50, "reps": 8, "set_number": 1}]
+    data["skipped_days"] = {}
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+
+    with mock.patch("timer.tg_send"), \
+         mock.patch("timer.w.load_workouts", return_value=data), \
+         mock.patch("session.datetime", wraps=datetime) as mock_sess_dt, \
+         mock.patch("program.datetime", wraps=datetime) as mock_prog_dt:
+        mock_sess_dt.now.return_value = wed
+        mock_prog_dt.now.return_value = wed
+        timer.main()
+
+    assert w.is_day_skipped(data, "2026-07-27") is False

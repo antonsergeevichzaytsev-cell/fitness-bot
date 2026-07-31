@@ -431,3 +431,31 @@ def test_format_day_plan_with_targets_target_beats_phase_in_display():
     vt_section = plan[vt_line_start:vt_line_end]
     assert "52.5кг" in vt_section  # точный target, не модифицированный фазой
     assert "8-10" in vt_section  # повторы тоже НЕ модифицированы (target не трогает reps плана — они из ex)
+
+
+# --- previous_training_date ----------------------------------------
+
+def test_previous_training_date_from_wednesday_is_monday():
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    assert p.previous_training_date(wed) == "2026-07-27"
+
+
+def test_previous_training_date_from_saturday_is_friday():
+    sat = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    assert p.previous_training_date(sat) == "2026-07-31"
+
+
+def test_previous_training_date_from_rest_day_finds_last_training_day():
+    tue = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    assert p.previous_training_date(tue) == "2026-07-27"
+
+
+def test_previous_training_date_wraps_to_previous_week():
+    mon = datetime(2026, 8, 3, tzinfo=timezone.utc)
+    assert p.previous_training_date(mon) == "2026-08-01"
+
+
+def test_previous_training_date_never_returns_today():
+    friday = datetime(2026, 7, 31, tzinfo=timezone.utc)
+    result = p.previous_training_date(friday)
+    assert result != friday.date().isoformat()

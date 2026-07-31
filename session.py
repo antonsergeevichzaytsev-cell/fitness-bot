@@ -285,6 +285,37 @@ def mark_daily_reminder_sent(data, now=None):
     data["daily_reminder_sent_date"] = msk_now.date().isoformat()
 
 
+def check_and_mark_silent_skip(data, now=None):
+    """Проверяет ПРЕДЫДУЩИЙ тренировочный день по расписанию (program.
+    previous_training_date) — если в этот день не было ни одной
+    записанной тренировки И он ещё не помечен явной командой ('болею'
+    через mark_day_skipped), помечает его автоматически как 'тихий'
+    пропуск (reason='' — отличает от явного 'болею' с текстом причины,
+    но всё ещё is_day_skipped=True).
+
+    НИКОГДА не трогает сегодняшний день — только строго предыдущий
+    тренировочный, раз сегодня ещё продолжается и рано делать выводы.
+
+    Возвращает True, если что-то реально пометил (для логирования в
+    timer.py — не для пользовательского сообщения, тихая фиксация без
+    уведомления, только для полноты данных под будущую сводку)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    prev_date = prog.previous_training_date(now)
+    if prev_date is None:
+        return False
+
+    if w.is_day_skipped(data, prev_date):
+        return False  # уже помечен явно или уже помечен тихо ранее
+
+    trained = any(s["date"] == prev_date for s in data.get("sets", []))
+    if trained:
+        return False  # была тренировка — нечего помечать
+
+    w.mark_day_skipped(data, prev_date, reason="")
+    return True
+
+
 PHASE_REMINDER_WEEKS = 6  # середина диапазона 4-8 недель, согласовано с Антоном 28.07.2026
 
 

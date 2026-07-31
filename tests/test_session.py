@@ -1239,3 +1239,54 @@ def test_is_month_summary_request_false_for_week_request():
 def test_week_and_month_requests_do_not_overlap():
     assert sess.is_week_summary_request("итоги месяца") is False
     assert sess.is_month_summary_request("итоги недели") is False
+
+
+# --- check_and_mark_silent_skip -------------------------------------
+
+def test_silent_skip_marks_previous_training_day_without_workout():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    result = sess.check_and_mark_silent_skip(data, now=wed)
+    assert result is True
+    assert w.is_day_skipped(data, "2026-07-27") is True
+
+
+def test_silent_skip_does_not_mark_when_workout_happened():
+    data = w.load_workouts()
+    data["sets"] = [{"date": "2026-07-27", "exercise": "присед", "weight_kg": 50, "reps": 8, "set_number": 1}]
+    data["skipped_days"] = {}
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    result = sess.check_and_mark_silent_skip(data, now=wed)
+    assert result is False
+    assert w.is_day_skipped(data, "2026-07-27") is False
+
+
+def test_silent_skip_does_not_overwrite_explicit_skip():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    w.mark_day_skipped(data, "2026-07-27", reason="болею")
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    result = sess.check_and_mark_silent_skip(data, now=wed)
+    assert result is False
+    assert data["skipped_days"]["2026-07-27"]["reason"] == "болею"
+
+
+def test_silent_skip_never_touches_today():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    friday = datetime(2026, 7, 31, tzinfo=timezone.utc)
+    sess.check_and_mark_silent_skip(data, now=friday)
+    assert w.is_day_skipped(data, "2026-07-31") is False
+
+
+def test_silent_skip_uses_empty_reason():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["skipped_days"] = {}
+    wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    sess.check_and_mark_silent_skip(data, now=wed)
+    assert data["skipped_days"]["2026-07-27"]["reason"] == ""

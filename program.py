@@ -6,7 +6,7 @@
 """
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import workouts as w
 
@@ -33,6 +33,23 @@ def today_day_id(now=None):
     if now is None:
         now = datetime.now(timezone.utc)
     return WEEKDAY_TO_DAY_ID.get(now.weekday())
+
+
+def previous_training_date(now=None):
+    """Возвращает дату (ISO-строку) последнего тренировочного дня по
+    расписанию СТРОГО ДО сегодня — не включая сегодня, даже если
+    сегодня тоже тренировочный день. Ищет назад максимум 7 дней (полный
+    недельный цикл гарантированно содержит хотя бы один тренировочный
+    день). Используется для обнаружения 'тихого' пропуска — если этот
+    день прошёл без тренировки и без явной команды 'болею', его нужно
+    зафиксировать как пропущенный."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    for days_back in range(1, 8):
+        candidate = now - timedelta(days=days_back)
+        if WEEKDAY_TO_DAY_ID.get(candidate.weekday()) is not None:
+            return candidate.date().isoformat()
+    return None  # не должно случиться при недельном расписании, но не падаем молча
 
 
 def get_day_plan(day_id, program=None):
