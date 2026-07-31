@@ -997,3 +997,32 @@ def test_handle_summary_request_month():
     data["sets"] = []
     result = bot.handle_summary_request(data, 30)
     assert "месяц" in result
+
+
+# --- handle_readiness_request ---------------------------------------
+
+def test_handle_readiness_request_no_active_session():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["wellness_log"] = {}
+    data["skipped_days"] = {}
+    w.save_wellness_for_date(data, "2026-07-28", sleep_hours=8.0, stress_level=3)
+    result = bot.handle_readiness_request(data)
+    assert "Готовность" in result
+    assert "100/100" in result
+
+
+def test_handle_readiness_request_with_active_session_includes_trend():
+    data = w.load_workouts()
+    data["sets"] = []
+    data["wellness_log"] = {}
+    data["skipped_days"] = {}
+    with mock.patch("program.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 7, 27, tzinfo=timezone.utc)
+        bot.handle_session_start(data)
+    bot.handle_weight_answer(data, "121")
+    bot.handle_wellness_answer(data, "нормально")
+    # с активной сессией handle_readiness_request не должен падать,
+    # даже если тренда по текущему упражнению ещё нет (первая тренировка)
+    result = bot.handle_readiness_request(data)
+    assert "Готовность" in result

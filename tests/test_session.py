@@ -1290,3 +1290,20 @@ def test_silent_skip_uses_empty_reason():
     wed = datetime(2026, 7, 29, tzinfo=timezone.utc)
     sess.check_and_mark_silent_skip(data, now=wed)
     assert data["skipped_days"]["2026-07-27"]["reason"] == ""
+
+
+# --- is_readiness_request --------------------------------------------
+
+def test_is_readiness_request_matches_keywords():
+    for text in ["готовность", "как я готов сегодня", "оцени готовность", "готов ли я"]:
+        assert sess.is_readiness_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_readiness_request_false_for_unrelated():
+    assert sess.is_readiness_request("взял") is False
+    assert sess.is_readiness_request("присед 50 на 8") is False
+
+
+def test_is_readiness_request_no_collision_with_goal_or_progress():
+    assert sess.is_goal_request("готовность") is False
+    assert sess.is_progress_request("готовность") is False

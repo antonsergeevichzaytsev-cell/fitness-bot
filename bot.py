@@ -59,6 +59,7 @@ import net
 import parser
 import program as prog
 import progression
+import readiness
 import safety
 import sanity
 import session as sess
@@ -444,6 +445,20 @@ def handle_goal_request(data):
     return report
 
 
+def handle_readiness_request(data):
+    """Обрабатывает 'готовность'/'как я готов' — расширенная
+    многосигнальная оценка через readiness.format_readiness_report.
+    Если сейчас идёт активная тренировка — передаёт текущее упражнение
+    для контекста тренда тоннажа именно по нему."""
+    exercise_for_trend = None
+    if sess.is_session_active(data):
+        ex, _ = sess.current_exercise_info(data)
+        if ex:
+            normalized = w.normalize_exercise_name(ex["name"], data.get("exercise_aliases", {}))
+            exercise_for_trend = normalized
+    return readiness.format_readiness_report(data, exercise_for_trend=exercise_for_trend)
+
+
 def handle_summary_request(data, days):
     """Обрабатывает 'итоги недели'/'итоги месяца' — строит агрегированную
     сводку через workouts.format_period_summary. days=7 для недели,
@@ -672,6 +687,10 @@ def main():
 
         if sess.is_goal_request(text):
             outgoing.append((handle_goal_request(data), None, None))
+            continue
+
+        if sess.is_readiness_request(text):
+            outgoing.append((handle_readiness_request(data), None, None))
             continue
 
         if sess.is_progress_request(text):
