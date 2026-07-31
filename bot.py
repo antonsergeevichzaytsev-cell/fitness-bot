@@ -87,6 +87,15 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
+SET_TYPE_LABELS = {
+    "warmup": "(разминка)",
+    "dropset": "(дропсет)",
+    "failure": "(до отказа)",
+    # "normal" намеренно отсутствует — обычный подход не аннотируется,
+    # чтобы не засорять подтверждение пометкой для 95% случаев
+}
+
+
 def esc(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -204,11 +213,14 @@ def handle_workout_message(text, data):
             s.get("weight_kg"), s.get("reps"), set_number,
             rpe=s.get("rpe"), note=s.get("note", ""),
             safety_status=safety_result["status"],
+            set_type=s.get("set_type", "normal"),
         )
         recorded_exercises.add(entry["exercise"])
 
         weight_str = f"{entry['weight_kg']}кг \u00d7 " if entry["weight_kg"] else ""
-        confirmation_lines.append(f"\u2022 {esc(entry['exercise'])}: {weight_str}{entry['reps']}")
+        type_label = SET_TYPE_LABELS.get(entry.get("set_type", "normal"), "")
+        type_suffix = f" {type_label}" if type_label else ""
+        confirmation_lines.append(f"\u2022 {esc(entry['exercise'])}: {weight_str}{entry['reps']}{type_suffix}")
 
     messages = ["\n".join(confirmation_lines)]
 

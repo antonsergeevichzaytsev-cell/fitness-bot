@@ -1026,3 +1026,55 @@ def test_handle_readiness_request_with_active_session_includes_trend():
     # даже если тренда по текущему упражнению ещё нет (первая тренировка)
     result = bot.handle_readiness_request(data)
     assert "Готовность" in result
+
+
+# --- set_type в handle_workout_message ------------------------------
+
+def test_handle_workout_message_passes_set_type_to_storage():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "присед", "weight_kg": 20.0, "reps": 10, "rpe": None, "note": "", "set_type": "warmup"}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        bot.handle_workout_message("присед 20 разминка", data)
+    assert data["sets"][-1]["set_type"] == "warmup"
+
+
+def test_handle_workout_message_shows_set_type_label():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "присед", "weight_kg": 45.0, "reps": 12, "rpe": None, "note": "", "set_type": "dropset"}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        result = bot.handle_workout_message("дропсет присед 45 на 12", data)
+    assert "дропсет" in result[0].lower()
+
+
+def test_handle_workout_message_normal_type_no_label():
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "присед", "weight_kg": 50.0, "reps": 8, "rpe": None, "note": "", "set_type": "normal"}],
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        result = bot.handle_workout_message("присед 50 на 8", data)
+    assert "(" not in result[0]  # обычный тип не аннотируется
+
+
+def test_handle_workout_message_missing_set_type_defaults_normal():
+    # Обратная совместимость: если DeepSeek почему-то не вернул set_type
+    # (старая версия промпта в кэше, или сбой) — не должно падать
+    data = w.load_workouts()
+    data["sets"] = []
+    fake_parsed = {
+        "uncertain": False,
+        "sets": [{"exercise": "присед", "weight_kg": 50.0, "reps": 8, "rpe": None, "note": ""}],  # нет set_type
+    }
+    with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
+        bot.handle_workout_message("присед 50 на 8", data)
+    assert data["sets"][-1]["set_type"] == "normal"
