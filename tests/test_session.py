@@ -1330,3 +1330,15 @@ def test_extract_one_rm_query_no_collision_with_other_keyword_sets():
     assert sess.is_progress_request("1рм жим") is False
     assert sess.is_goal_request("1рм жим") is False
     assert sess.is_readiness_request("1рм жим") is False
+
+
+# --- is_export_request ------------------------------------------------
+
+def test_is_export_request_matches_keywords():
+    for text in ["экспорт", "выгрузи историю", "скачать историю", "csv", "выгрузка"]:
+        assert sess.is_export_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_export_request_false_for_unrelated():
+    assert sess.is_export_request("взял") is False
+    assert sess.is_export_request("присед 50 на 8") is False

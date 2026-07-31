@@ -1111,3 +1111,35 @@ def test_handle_one_rm_unmatched_query_suggests_known_exercises():
     result = bot.handle_one_rm_request(data, "1рм бег")
     assert "не нашёл" in result.lower()
     assert "жим лёжа гантели" in result
+
+
+# --- handle_export_request ------------------------------------------
+
+def test_handle_export_request_sends_document_when_history_exists():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим", "2026-07-27", 40.0, 8, 1)
+
+    sent_docs = []
+    with mock.patch("bot.tg_send_document", side_effect=lambda fn, cb, caption="": sent_docs.append((fn, caption))):
+        result = bot.handle_export_request(data)
+
+    assert result is True
+    assert len(sent_docs) == 1
+    assert sent_docs[0][0].endswith(".csv")
+
+
+def test_handle_export_request_no_history_sends_message_not_document():
+    data = w.load_workouts()
+    data["sets"] = []
+
+    sent_messages = []
+    sent_docs = []
+    with mock.patch("bot.tg_send", side_effect=lambda t, reply_markup=None: sent_messages.append(t)), \
+         mock.patch("bot.tg_send_document", side_effect=lambda fn, cb, caption="": sent_docs.append(fn)):
+        result = bot.handle_export_request(data)
+
+    assert result is False
+    assert len(sent_messages) == 1
+    assert "нечего экспортировать" in sent_messages[0].lower()
+    assert sent_docs == []

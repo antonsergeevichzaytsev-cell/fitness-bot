@@ -30,6 +30,7 @@ PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "
 GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "покажи цель", "сколько до цели", "динамика веса"]
 READINESS_KEYWORDS = ["готовность", "как я готов", "готов ли я", "оцени готовность"]
 ONE_RM_KEYWORDS = ["1rm", "1рм", "макс на раз", "максимум на один повтор", "мой максимум"]
+EXPORT_KEYWORDS = ["экспорт", "выгрузи историю", "csv", "скачать историю", "выгрузка"]
 WEEK_SUMMARY_KEYWORDS = ["итоги недели", "итоги за неделю", "сводка за неделю", "статистика за неделю"]
 MONTH_SUMMARY_KEYWORDS = ["итоги месяца", "итоги за месяц", "сводка за месяц", "статистика за месяц"]
 CARDIO_KEYWORD = "кардио"
@@ -190,6 +191,15 @@ def extract_one_rm_query(text):
                     break
             return rest
     return ""
+
+
+def is_export_request(text):
+    """'экспорт', 'выгрузи историю', 'скачать историю', 'csv' —
+    запрос выгрузки полной истории подходов CSV-файлом (workouts.
+    export_sets_to_csv). Не пересекается с другими наборами ключевых
+    слов."""
+    t = text.strip().lower()
+    return any(kw in t for kw in EXPORT_KEYWORDS)
 
 
 def is_week_summary_request(text):

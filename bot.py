@@ -155,6 +155,47 @@ def tg_answer_callback(callback_id, text=""):
         print(f"  ! answerCallbackQuery error: {e}", file=sys.stderr)
 
 
+def tg_send_document(filename, content_bytes, caption=""):
+    """Отправляет файл через Telegram sendDocument — urllib не имеет
+    встроенной поддержки multipart/form-data (в отличие от requests),
+    собираем тело запроса вручную по спецификации multipart. Нужно для
+    экспорта истории в CSV — CSV-текст в обычном сообщении был бы
+    нечитаемым и бесполезным, файл-документ пользователь может открыть
+    в Excel/Google Sheets."""
+    boundary = "----FitnessBotBoundary" + hashlib.sha1(filename.encode("utf-8")).hexdigest()[:16]
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+
+    parts = []
+    parts.append(f"--{boundary}\r\n".encode("utf-8"))
+    parts.append(b'Content-Disposition: form-data; name="chat_id"\r\n\r\n')
+    parts.append(f"{CHAT_ID}\r\n".encode("utf-8"))
+
+    if caption:
+        parts.append(f"--{boundary}\r\n".encode("utf-8"))
+        parts.append(b'Content-Disposition: form-data; name="caption"\r\n\r\n')
+        parts.append(f"{caption}\r\n".encode("utf-8"))
+
+    parts.append(f"--{boundary}\r\n".encode("utf-8"))
+    parts.append(f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'.encode("utf-8"))
+    parts.append(b"Content-Type: text/csv\r\n\r\n")
+    parts.append(content_bytes)
+    parts.append(b"\r\n")
+    parts.append(f"--{boundary}--\r\n".encode("utf-8"))
+
+    body = b"".join(parts)
+    req = urllib.request.Request(url, data=body, headers={
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    })
+    try:
+        with net.urlopen_retry(req, timeout=30) as r:
+            resp = json.loads(r.read().decode("utf-8"))
+        return (resp.get("result") or {}).get("message_id")
+    except urllib.error.HTTPError as e:
+        body_text = e.read().decode("utf-8", errors="replace")
+        print(f"  ! telegram sendDocument error {e.code}: {body_text}", file=sys.stderr)
+        raise
+
+
 def suggestion_keyboard(suggestion_id):
     return {
         "inline_keyboard": [[
@@ -495,6 +536,29 @@ def handle_one_rm_request(data, text):
     return report or f"Нет истории по «{exercise}»."
 
 
+def handle_export_request(data):
+    """Обрабатывает 'экспорт'/'выгрузи историю'/'csv' — отправляет
+    полную историю подходов CSV-файлом через tg_send_document. Не
+    возвращает текст для обычного outgoing-цикла (файл отправляется
+    напрямую здесь) — вызывающий код в main() должен вызвать эту
+    функцию и НЕ добавлять результат в outgoing.
+
+    Возвращает True, если файл был реально отправлен (даже пустая
+    история — валидный CSV с одним заголовком, отправляется как есть,
+    не считается ошибкой), False только если данных нет вообще
+    (data['sets'] пуст) — в этом случае отправлять пустой файл
+    бессмысленно, лучше сказать пользователю прямо."""
+    if not data.get("sets"):
+        tg_send("У тебя ещё нет истории тренировок — нечего экспортировать.")
+        return False
+
+    csv_bytes = w.export_sets_to_csv(data)
+    today = datetime.now(timezone.utc).date().isoformat()
+    filename = f"workout_history_{today}.csv"
+    tg_send_document(filename, csv_bytes, caption=f"История тренировок — {len(data['sets'])} подходов")
+    return True
+
+
 def handle_summary_request(data, days):
     """Обрабатывает 'итоги недели'/'итоги месяца' — строит агрегированную
     сводку через workouts.format_period_summary. days=7 для недели,
@@ -731,6 +795,10 @@ def main():
 
         if sess.is_one_rm_request(text):
             outgoing.append((handle_one_rm_request(data, text), None, None))
+            continue
+
+        if sess.is_export_request(text):
+            handle_export_request(data)  # отправляет документ напрямую, не через outgoing
             continue
 
         if sess.is_progress_request(text):

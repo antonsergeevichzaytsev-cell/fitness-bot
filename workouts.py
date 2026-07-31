@@ -3,7 +3,9 @@
 
 Схема данных описана в SCHEMA.md — читать перед правкой этого файла.
 """
+import csv
 import hashlib
+import io
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -191,6 +193,37 @@ def save_weight_for_date(data, date, weight_kg):
     день — маловероятно, но возможно), перезаписывает последней —
     вес тела логично считать один раз в день, не суммировать."""
     data.setdefault("weight_log", {})[date] = weight_kg
+
+
+def export_sets_to_csv(data):
+    """Строит CSV со всей историей подходов — стандартный csv.writer
+    (не выдуманный формат), совместимый с Excel/Google Sheets/pandas.
+    Колонки: date, exercise, weight_kg, reps, set_type, rpe, note,
+    safety_status — полный набор полей записи, ничего не скрыто.
+
+    Возвращает bytes (UTF-8 с BOM — Excel на Windows иначе показывает
+    кириллицу битой без явного BOM, это известная особенность, не
+    опциональна для реальной пригодности файла). Пустая история ->
+    файл только с заголовком, не None — экспорт 'нечего экспортировать'
+    сам по себе валидный (пустая) CSV, не ошибка."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["date", "exercise", "weight_kg", "reps", "set_type", "rpe", "note", "safety_status"])
+
+    sets_sorted = sorted(data.get("sets", []), key=lambda s: (s["date"], s.get("ts", "")))
+    for s in sets_sorted:
+        writer.writerow([
+            s.get("date", ""),
+            s.get("exercise", ""),
+            s.get("weight_kg", ""),
+            s.get("reps", ""),
+            s.get("set_type", "normal"),
+            s.get("rpe", "") if s.get("rpe") is not None else "",
+            s.get("note", ""),
+            s.get("safety_status", ""),
+        ])
+
+    return output.getvalue().encode("utf-8-sig")  # utf-8-sig добавляет BOM для Excel
 
 
 def get_weight_history(data, limit_entries=None):

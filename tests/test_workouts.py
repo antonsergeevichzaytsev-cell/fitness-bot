@@ -1,6 +1,8 @@
 """Тесты для workouts.py — хранилище тренировок, нормализация упражнений
 через алиасы, история по упражнению, targets.
 """
+import csv
+import io
 import sys
 from datetime import datetime, timezone
 
@@ -651,3 +653,66 @@ def test_period_summary_custom_days_naming():
     now = datetime(2026, 7, 28, tzinfo=timezone.utc)
     report = w.format_period_summary(data, 14, now=now)
     assert "14 дней" in report
+
+
+# --- export_sets_to_csv -----------------------------------------------
+
+def test_export_csv_empty_history_has_header_only():
+    data = w.load_workouts()
+    data["sets"] = []
+    csv_bytes = w.export_sets_to_csv(data)
+    text = csv_bytes.decode("utf-8-sig")
+    lines = text.strip().split("\r\n")
+    assert len(lines) == 1  # только заголовок
+    assert lines[0] == "date,exercise,weight_kg,reps,set_type,rpe,note,safety_status"
+
+
+def test_export_csv_includes_all_fields():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа", "2026-07-27", 40.0, 8, 1, rpe=7, note="нормально")
+    csv_bytes = w.export_sets_to_csv(data)
+    text = csv_bytes.decode("utf-8-sig")
+    assert "жим лёжа" in text
+    assert "40.0" in text
+    assert "нормально" in text
+    assert "7" in text
+
+
+def test_export_csv_is_valid_and_parseable():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим", "2026-07-27", 40.0, 8, 1)
+    csv_bytes = w.export_sets_to_csv(data)
+    reader = csv.reader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+    rows = list(reader)
+    assert len(rows) == 2  # заголовок + 1 запись
+    assert rows[1][1] == "жим"
+
+
+def test_export_csv_sorted_by_date():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "присед", "2026-07-28", 50.0, 8, 1)
+    w.add_set(data, "жим", "2026-07-20", 40.0, 8, 1)
+    csv_bytes = w.export_sets_to_csv(data)
+    reader = csv.reader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+    rows = list(reader)
+    assert rows[1][0] == "2026-07-20"  # более старая дата первой
+    assert rows[2][0] == "2026-07-28"
+
+
+def test_export_csv_includes_set_type():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим", "2026-07-27", 30.0, 10, 1, set_type="warmup")
+    csv_bytes = w.export_sets_to_csv(data)
+    text = csv_bytes.decode("utf-8-sig")
+    assert "warmup" in text
+
+
+def test_export_csv_has_utf8_bom_for_excel():
+    data = w.load_workouts()
+    data["sets"] = []
+    csv_bytes = w.export_sets_to_csv(data)
+    assert csv_bytes.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM signature
