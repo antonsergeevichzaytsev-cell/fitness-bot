@@ -1307,3 +1307,26 @@ def test_is_readiness_request_false_for_unrelated():
 def test_is_readiness_request_no_collision_with_goal_or_progress():
     assert sess.is_goal_request("готовность") is False
     assert sess.is_progress_request("готовность") is False
+
+
+# --- is_one_rm_request / extract_one_rm_query ------------------------
+
+def test_is_one_rm_request_matches_keywords():
+    for text in ["1рм жим", "1RM bench", "мой максимум на приседе", "максимум на один повтор жим"]:
+        assert sess.is_one_rm_request(text) is True, f"failed on {text!r}"
+
+
+def test_is_one_rm_request_false_for_unrelated():
+    assert sess.is_one_rm_request("взял") is False
+    assert sess.is_one_rm_request("присед 50 на 8") is False
+
+
+def test_extract_one_rm_query_strips_keyword_and_preposition():
+    assert sess.extract_one_rm_query("1рм жим") == "жим"
+    assert sess.extract_one_rm_query("мой максимум на приседе") == "приседе"
+
+
+def test_extract_one_rm_query_no_collision_with_other_keyword_sets():
+    assert sess.is_progress_request("1рм жим") is False
+    assert sess.is_goal_request("1рм жим") is False
+    assert sess.is_readiness_request("1рм жим") is False

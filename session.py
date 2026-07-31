@@ -29,6 +29,7 @@ UNDO_KEYWORDS = ["отмени", "отмена", "убери последн", "�
 PROGRESS_KEYWORDS = ["покажи прогресс", "прогресс по", "как дела с", "статистика по", "покажи статистику"]
 GOAL_KEYWORDS = ["цель по весу", "прогресс по весу", "покажи цель", "сколько до цели", "динамика веса"]
 READINESS_KEYWORDS = ["готовность", "как я готов", "готов ли я", "оцени готовность"]
+ONE_RM_KEYWORDS = ["1rm", "1рм", "макс на раз", "максимум на один повтор", "мой максимум"]
 WEEK_SUMMARY_KEYWORDS = ["итоги недели", "итоги за неделю", "сводка за неделю", "статистика за неделю"]
 MONTH_SUMMARY_KEYWORDS = ["итоги месяца", "итоги за месяц", "сводка за месяц", "статистика за месяц"]
 CARDIO_KEYWORD = "кардио"
@@ -163,6 +164,32 @@ def is_readiness_request(text):
     (проверено явно)."""
     t = text.strip().lower()
     return any(kw in t for kw in READINESS_KEYWORDS)
+
+
+def is_one_rm_request(text):
+    """'1рм жим', 'мой максимум присед' — запрос оценки 1RM
+    (strength.py). Английское '1rm' тоже распознаётся — частый способ
+    писать, даже в русскоязычном сообщении."""
+    t = text.strip().lower()
+    return any(kw in t for kw in ONE_RM_KEYWORDS)
+
+
+def extract_one_rm_query(text):
+    """Извлекает название упражнения из запроса 1RM — то, что осталось
+    после отбрасывания ключевой фразы, с зачисткой висящих предлогов
+    ('на', 'по' — 'мой максимум на жиме' не должен оставить лишнее
+    'на жиме' вместо 'жиме'). Пустая строка, если ничего не осталось."""
+    t = text.strip().lower()
+    for kw in ONE_RM_KEYWORDS:
+        idx = t.find(kw)
+        if idx != -1:
+            rest = t[idx + len(kw):].strip()
+            for prefix in ("по ", "на ", "для "):
+                if rest.startswith(prefix):
+                    rest = rest[len(prefix):].strip()
+                    break
+            return rest
+    return ""
 
 
 def is_week_summary_request(text):

@@ -63,6 +63,7 @@ import readiness
 import safety
 import sanity
 import session as sess
+import strength
 import workouts as w
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -471,6 +472,29 @@ def handle_readiness_request(data):
     return readiness.format_readiness_report(data, exercise_for_trend=exercise_for_trend)
 
 
+def handle_one_rm_request(data, text):
+    """Обрабатывает '1рм жим'/'мой максимум на приседе' — оценка 1RM
+    через strength.format_1rm_report. Использует тот же
+    find_exercise_by_partial_name, что и handle_progress_request —
+    детерминированный substring-матчинг, не LLM."""
+    query = sess.extract_one_rm_query(text)
+    if not query:
+        return "Уточни, для какого упражнения посчитать 1RM — например «1рм жим»."
+
+    exercise = w.find_exercise_by_partial_name(data, query)
+    if exercise is None:
+        known = w.known_exercises(data)
+        if not known:
+            return "У тебя ещё нет истории тренировок — не с чем считать 1RM."
+        return (
+            f"Не нашёл упражнение «{query}» однозначно, или таких несколько. "
+            f"Есть в истории: {', '.join(known[:10])}."
+        )
+
+    report = strength.format_1rm_report(data, exercise)
+    return report or f"Нет истории по «{exercise}»."
+
+
 def handle_summary_request(data, days):
     """Обрабатывает 'итоги недели'/'итоги месяца' — строит агрегированную
     сводку через workouts.format_period_summary. days=7 для недели,
@@ -703,6 +727,10 @@ def main():
 
         if sess.is_readiness_request(text):
             outgoing.append((handle_readiness_request(data), None, None))
+            continue
+
+        if sess.is_one_rm_request(text):
+            outgoing.append((handle_one_rm_request(data, text), None, None))
             continue
 
         if sess.is_progress_request(text):

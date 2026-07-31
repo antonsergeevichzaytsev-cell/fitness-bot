@@ -1078,3 +1078,36 @@ def test_handle_workout_message_missing_set_type_defaults_normal():
     with mock.patch("bot.parser.parse_workout_text", return_value=fake_parsed):
         bot.handle_workout_message("присед 50 на 8", data)
     assert data["sets"][-1]["set_type"] == "normal"
+
+
+# --- handle_one_rm_request -----------------------------------------
+
+def test_handle_one_rm_empty_query_asks_to_clarify():
+    data = w.load_workouts()
+    result = bot.handle_one_rm_request(data, "1рм")
+    assert "уточни" in result.lower()
+
+
+def test_handle_one_rm_no_history_at_all():
+    data = w.load_workouts()
+    data["sets"] = []
+    result = bot.handle_one_rm_request(data, "1рм жим")
+    assert "нет истории" in result.lower()
+
+
+def test_handle_one_rm_shows_estimate_for_found_exercise():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 10, 1)
+    result = bot.handle_one_rm_request(data, "1рм жим")
+    assert "Оценка 1RM" in result
+    assert "40.0" in result
+
+
+def test_handle_one_rm_unmatched_query_suggests_known_exercises():
+    data = w.load_workouts()
+    data["sets"] = []
+    w.add_set(data, "жим лёжа гантели", "2026-07-27", 30.0, 10, 1)
+    result = bot.handle_one_rm_request(data, "1рм бег")
+    assert "не нашёл" in result.lower()
+    assert "жим лёжа гантели" in result
