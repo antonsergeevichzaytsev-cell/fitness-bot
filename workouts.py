@@ -57,16 +57,43 @@ def make_set_id(exercise, date, set_number):
     return "s_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
 
+VALID_SET_TYPES = {"normal", "warmup", "dropset", "failure"}
+
+
+def is_countable_for_tonnage(s):
+    """True, если сет должен учитываться в тоннаже/прогрессе. Разминочные
+    подходы (warmup) ИСКЛЮЧАЮТСЯ — индустриальный стандарт (Hevy/Strong/
+    Jefit все делают так): разминка не отражает рабочую нагрузку, её
+    включение искусственно завысило бы тоннаж и исказило бы тренды.
+    dropset/failure/normal — все считаются (это реальная рабочая
+    нагрузка, просто разного типа).
+
+    Записи БЕЗ поля set_type (сделанные до этой фичи, старые данные)
+    считаются countable по умолчанию — обратная совместимость, не
+    теряем историю задним числом."""
+    return s.get("set_type", "normal") != "warmup"
+
+
 def add_set(data, exercise_raw, date, weight_kg, reps, set_number,
-            rpe=None, note="", safety_status="ok"):
+            rpe=None, note="", safety_status="ok", set_type="normal"):
     """Добавляет один сет в data['sets'], нормализуя имя упражнения через
     exercise_aliases. Если exercise_raw — новая формулировка известного
     упражнения, вызывающий код должен был уже обновить aliases (это
     делает parser.py через DeepSeek-сверку, не эта функция — add_set
     только записывает, не решает про алиасы).
 
+    set_type: 'normal' (обычный, дефолт — обратная совместимость со
+    всеми существующими вызовами, включая пошаговый флоу 'взял', для
+    которого тип не имеет смысла), 'warmup' (разминочный, обычно
+    исключается из подсчёта тоннажа/прогресса), 'dropset' (дроп-сет —
+    без отдыха, сниженный вес), 'failure' (до отказа). Некорректное
+    значение молча заменяется на 'normal' — не падаем на опечатке типа,
+    но и не выдумываем несуществующий тип.
+
     Возвращает добавленную запись (dict), также уже добавленную в
     data['sets'] по ссылке (мутирует data)."""
+    if set_type not in VALID_SET_TYPES:
+        set_type = "normal"
     exercise = normalize_exercise_name(exercise_raw, data.get("exercise_aliases", {}))
     entry = {
         "id": make_set_id(exercise, date, set_number),
@@ -79,6 +106,7 @@ def add_set(data, exercise_raw, date, weight_kg, reps, set_number,
         "rpe": rpe,
         "note": note,
         "safety_status": safety_status,
+        "set_type": set_type,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
     data.setdefault("sets", []).append(entry)
@@ -264,7 +292,10 @@ def format_period_summary(data, days, now=None):
     training_dates = sorted({s["date"] for s in sets_in_period})
     skipped_in_period = [d for d in data.get("skipped_days", {}) if d in period_dates]
 
-    total_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in sets_in_period)
+    total_tonnage = sum(
+        (s.get("weight_kg") or 0) * s.get("reps", 0)
+        for s in sets_in_period if is_countable_for_tonnage(s)
+    )
 
     total_cardio_km = 0.0
     for date in period_dates:
@@ -341,14 +372,23 @@ def format_progress_report(data, exercise, limit_sessions=10):
     for session in history:
         sets = session["sets"]
         max_weight = max((s.get("weight_kg") or 0) for s in sets)
-        tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in sets)
+        tonnage = sum(
+            (s.get("weight_kg") or 0) * s.get("reps", 0)
+            for s in sets if is_countable_for_tonnage(s)
+        )
         max_reps = max(s.get("reps", 0) for s in sets)
         weight_str = f"{max_weight}кг" if max_weight else "б/в"
         lines.append(f"  {session['date']}: {weight_str} \u00d7 {max_reps} (тоннаж {round(tonnage)} кг)")
 
     if len(history) >= 2:
-        first_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in history[0]["sets"])
-        last_tonnage = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in history[-1]["sets"])
+        first_tonnage = sum(
+            (s.get("weight_kg") or 0) * s.get("reps", 0)
+            for s in history[0]["sets"] if is_countable_for_tonnage(s)
+        )
+        last_tonnage = sum(
+            (s.get("weight_kg") or 0) * s.get("reps", 0)
+            for s in history[-1]["sets"] if is_countable_for_tonnage(s)
+        )
         if first_tonnage > 0:
             change_pct = round((last_tonnage - first_tonnage) / first_tonnage * 100)
             sign = "+" if change_pct >= 0 else ""

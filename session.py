@@ -826,7 +826,10 @@ def build_session_report(data, exercises, session_date, day_id=None,
         if not today_sessions:
             continue
         today_sets = today_sessions[0]["sets"]
-        total_tonnage += sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in today_sets)
+        total_tonnage += sum(
+            (s.get("weight_kg") or 0) * s.get("reps", 0)
+            for s in today_sets if w.is_countable_for_tonnage(s)
+        )
 
         plan_ex = None
         if day_plan:
@@ -869,10 +872,16 @@ def _format_exercise_today(exercise, today_sets):
 
 def _format_trend(today_sets, prior_sets):
     """Сравнивает суммарный тоннаж (вес x повторы, просуммировано по
-    сетам) сегодня против прошлой сессии — простая, понятная метрика
-    тренда, не требующая сложной статистики."""
-    today_volume = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in today_sets)
-    prior_volume = sum((s.get("weight_kg") or 0) * s.get("reps", 0) for s in prior_sets)
+    сетам, БЕЗ разминочных подходов) сегодня против прошлой сессии —
+    простая, понятная метрика тренда, не требующая сложной статистики."""
+    today_volume = sum(
+        (s.get("weight_kg") or 0) * s.get("reps", 0)
+        for s in today_sets if w.is_countable_for_tonnage(s)
+    )
+    prior_volume = sum(
+        (s.get("weight_kg") or 0) * s.get("reps", 0)
+        for s in prior_sets if w.is_countable_for_tonnage(s)
+    )
 
     if prior_volume == 0:
         return "первая тренировка с весом по этому упражнению"
