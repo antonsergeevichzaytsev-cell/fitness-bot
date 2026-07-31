@@ -51,5 +51,7 @@
     "started_date": null,
     "reminder_sent": false
   },
-  "daily_reminder_sent_date": "2026-07-29"
+  "daily_reminder_sent_date": "2026-07-31",
+  "weight_log": {},
+  "skipped_days": {}
 }
