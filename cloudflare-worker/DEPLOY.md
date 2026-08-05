@@ -41,7 +41,7 @@ Cloudflare покажет его после деплоя — вида
 `<SECRET>` на ту же строку, что в TELEGRAM_SECRET_TOKEN):
 
 ```
-https://api.telegram.org/bot***REMOVED-LEAKED-TOKEN***/setWebhook?url=<WORKER_URL>&secret_token=<SECRET>
+https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=<WORKER_URL>&secret_token=<SECRET>
 ```
 
 Должно вернуть `{"ok":true,"result":true,"description":"Webhook was set"}`.
@@ -49,7 +49,7 @@ https://api.telegram.org/bot***REMOVED-LEAKED-TOKEN***/setWebhook?url=<WORKER_UR
 Проверить, что webhook встал: открой
 
 ```
-https://api.telegram.org/bot***REMOVED-LEAKED-TOKEN***/getWebhookInfo
+https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
 ```
 
 `url` должен быть равен `<WORKER_URL>`, `pending_update_count` — 0
