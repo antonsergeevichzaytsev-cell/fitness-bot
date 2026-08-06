@@ -986,7 +986,11 @@ def test_exact_screenshot_scenario_no_longer_confuses_bot():
 def test_handle_summary_request_week():
     data = w.load_workouts()
     data["sets"] = []
-    w.add_set(data, "жим лёжа", "2026-07-27", 45.0, 10, 1)
+    # Дата ОТНОСИТЕЛЬНАЯ: окно сводки — последние 7 дней от сегодня.
+    # Захардкоженная дата ломает тест ровно через неделю после написания
+    # (так и вышло 06.08.26), при полностью исправном коде.
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).date().isoformat()
+    w.add_set(data, "жим лёжа", recent, 45.0, 10, 1)
     result = bot.handle_summary_request(data, 7)
     assert "неделю" in result
     assert "Тренировок: 1" in result
