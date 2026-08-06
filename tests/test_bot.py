@@ -7,7 +7,7 @@
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test")
