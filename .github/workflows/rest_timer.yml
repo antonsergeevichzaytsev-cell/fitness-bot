@@ -21,7 +21,13 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    # 19.08.2026: было 2 минуты — впритык или меньше худшего случая
+    # retry-цикла ниже (до 8 * 14s = 112s только на sleep, плюс сам
+    # git fetch/rebase/push). При queue: max с fitness_bot.yml (общий
+    # concurrency group: repo-writes) job упирался в таймаут раньше,
+    # чем успевал докрутить retry — отсюда ~17% failure rate (5178 из
+    # 30814 прогонов), именно те, где было что коммитить.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,10 +50,15 @@ jobs:
           git add workouts.json || true
           git diff --cached --quiet && echo "nothing to commit" && exit 0
           git commit -m "timer: $(date -u +%Y-%m-%d_%H-%MZ)"
-          for i in 1 2 3 4 5 6 7 8; do
+          # 19.08.2026: retry сокращён с 8 попыток (до 112s только на
+          # sleep) до 4 (до ~34s) — тихая фиксация пропуска не срочная,
+          # переживёт следующий прогон через минуту без потери данных;
+          # смысла упираться в двухминутный (теперь пятиминутный)
+          # timeout ради этого нет.
+          for i in 1 2 3 4; do
             git fetch origin main
             git rebase origin/main || git rebase --abort
             git push origin HEAD:main && exit 0
-            echo "retry $i"; sleep $((RANDOM % 10 + 5))
+            echo "retry $i"; sleep $((RANDOM % 6 + 3))
           done
-          echo "push failed after 8 retries"; exit 1
+          echo "push failed after 4 retries — will retry next minute via next cron tick"; exit 1
