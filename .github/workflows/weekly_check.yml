@@ -1,0 +1,36 @@
+name: Weekly Check
+
+# 19.08.2026: первый самомониторинг у fitness-bot — до этого не было
+# вообще ничего (в отличие от metals-news-bot, где weekly_check.yml
+# уже был). Прямая параллель с реальным инцидентом: metals-news-bot
+# тихо не работал 5+ дней (протухший GMAIL_APP_PASSWORD), обнаружили
+# только по failure-статистике Actions, не по проактивному алерту.
+
+on:
+  schedule:
+    # Время Ташкента, UTC+5. Узбекистан летнее время не применяет —
+    # сдвиг фиксированный круглый год, сезонной правки не потребуется.
+    - cron: '0 14 * * 0'   # Вс 19:00 Ташкент
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run weekly check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY:  ${{ github.repository }}
+        run: python weekly_check.py
